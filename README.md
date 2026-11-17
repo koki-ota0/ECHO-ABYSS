@@ -29,6 +29,18 @@ npm run dev
 
 タッチデバイスでは、仮想スティックと **SKILL / ZERO / ECHO / DASH** の4ボタンを使用できます。ゲームフィールドを長押しすれば、照準・手動射撃も可能です。
 
+### GitHub Pages で公開する
+
+このゲームはサーバーもAPIキーも使わない完全なクライアントサイド実装なので、GitHub Pages でそのまま公開できます。
+
+1. リポジトリの **Settings → Pages** を開く
+2. **Build and deployment → Source** を **GitHub Actions** にする
+3. `main` へ push する（`.github/workflows/deploy-pages.yml` が自動でビルド・公開します）
+
+公開URLは `https://<ユーザー名>.github.io/<リポジトリ名>/` です。手動で再実行したい場合は **Actions → Deploy to GitHub Pages → Run workflow** を使います。
+
+ビルドは `base: './'` で相対パスを出力するため、リポジトリ名を変えても、独自ドメインの直下に置いても動作します。`npm run build` の最後に `scripts/check-pages-build.mjs` が走り、`/assets/...` のようなサブパスで壊れる絶対パスが混ざっていれば失敗します。進捗データは `localStorage` に保存されるため、公開後もサーバー側の設定は不要です。
+
 ## ゲームモード
 
 ### INFINITE
