@@ -46,7 +46,10 @@ kbd { display: inline-flex; align-items: center; justify-content: center; min-wi
 
 /* Title screen */
 .menu-screen { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; overflow: auto; background: #05080d; }
-.menu-keyart { position: fixed; inset: 0; background: url('/images/echo-abyss-keyart.jpg') center center / cover no-repeat; opacity: .82; animation: keyart-in 1.8s ease both; }
+.menu-keyart { position: fixed; inset: 0; background-color: #05070b; background-position: center center; background-size: cover; background-repeat: no-repeat; opacity: .82; animation: keyart-in 1.8s ease both; }
+/* Vite rewrites url() in CSS, so the key art is referenced relative to this
+   stylesheet. That keeps it working under a GitHub Pages subpath. */
+.menu-keyart { background-image: url('../public/images/echo-abyss-keyart.jpg'); }
 .menu-vignette { position: fixed; inset: 0; background: linear-gradient(90deg, rgba(3,6,10,.97) 0%, rgba(3,6,10,.78) 32%, rgba(3,6,10,.15) 64%, rgba(3,6,10,.66) 100%), linear-gradient(0deg, rgba(3,6,10,.95) 0%, transparent 24%, rgba(3,6,10,.55) 100%); }
 .menu-vignette::after { content: ''; position: absolute; inset: 0; opacity: .12; background-image: linear-gradient(rgba(98,246,231,.09) 1px, transparent 1px), linear-gradient(90deg, rgba(98,246,231,.09) 1px, transparent 1px); background-size: 90px 90px; mask-image: linear-gradient(90deg, #000, transparent 50%); }
 .menu-header { position: relative; z-index: 2; width: 100%; max-width: 1540px; margin: 0 auto; padding: 28px 44px 16px; display: flex; align-items: center; gap: 30px; }
