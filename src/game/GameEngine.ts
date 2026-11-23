@@ -58,6 +58,10 @@ const RAIL_LOCK_TIME = 0.45;
 const RAIL_HALF_WIDTH = 150;
 const RAIL_LENGTH = 1750;
 const RAIL_NORMAL_DAMAGE = 30;
+// Ramming is the least readable damage source, so it is damped relative to
+// bullets. Without this a single late-stage tank touch removes a third of the
+// frame before a draft can answer it.
+const CONTACT_DAMAGE_SCALE = 0.8;
 const angleInBucket = (angle: number, bucket: number) => {
   const width = TAU / AIM_BUCKETS;
   return Math.abs(angleDelta(bucket * width + width / 2, angle)) <= width / 2;
@@ -298,6 +302,24 @@ export class GameEngine {
   private get enemyRosterTier() {
     if (this.challenge) return this.challenge.enemyTier;
     return Math.min(ENEMY_ROSTERS.length, 1 + Math.floor(this.sector / 2));
+  }
+
+  // Fire cadence is the main threat lever. Enemy durability stays readable
+  // because a draft build outpaces linear HP growth, but shooting faster
+  // keeps the screen busy without turning enemies into bullet sponges.
+  private get enemyFireRateScale() {
+    if (this.challenge) return this.challenge.enemyFireRate;
+    const depth = this.infiniteDepth;
+    const abyss = this.difficulty === 'abyss' ? 1.18 : 1;
+    return Math.min(3.4, 1 + (this.sector - 1) * 0.05 + depth * 0.14) * abyss;
+  }
+
+  // Enemy shots used to cap out below the frame's move speed (250 vs 285), so
+  // a player who simply kept moving could never be hit. Projectiles now gain
+  // speed with the stage and stay faster than a walking frame.
+  private get enemyProjectileScale() {
+    if (this.challenge) return this.challenge.enemyProjectileSpeed;
+    return Math.min(1.9, 1 + (this.sector - 1) * 0.03 + this.infiniteDepth * 0.06);
   }
 
   private get tankLimit() {
@@ -869,14 +891,27 @@ export class GameEngine {
       const difficultyScale = this.difficulty === 'abyss' ? ABYSS_MODIFIER.spawnRate : 1;
       const depthSpawnRate = this.challenge ? 1 : 1 + depth * INFINITE_DEPTH_SCALING.spawnRate;
       const stageSpawnRate = this.challenge?.spawnRate ?? 1;
-      const baseInterval = this.challenge
-        ? 0.95 + enemyTier * 0.055 - this.elapsed * 0.0001
-        : 1.0 - enemyTier * 0.052 - this.elapsed * 0.00045;
-      const interval = Math.max(this.challenge ? 0.65 : 0.17, baseInterval / stageSpawnRate) * (this.anomaly?.spawn ?? 1) * (boss ? 2.2 : 1) / difficultyScale / depthSpawnRate;
+      let interval: number;
+      let extraChance: number;
+      if (this.challenge) {
+        // LEVEL keeps its arena populated and tightens it across the stage.
+        // The combat window is short, so a steady trickle is what makes the
+        // difficulty curve visible at all. The old curve grew the interval
+        // with the tier, which made late stages the emptiest.
+        const progress = Math.min(1, this.elapsed / this.challenge.combatDuration);
+        interval = 0.6 - enemyTier * 0.016 - this.elapsed * 0.0008;
+        interval *= 1 + (1 - progress) * 0.7;
+        // Keeping up is the challenge, so the opening spawns are calm and the
+        // trouble starts once the build has picks behind it.
+        extraChance = 0.18 + enemyTier * 0.02 - (1 - progress) * 0.12;
+      } else {
+        interval = 1.0 - enemyTier * 0.052 - this.elapsed * 0.00045;
+        extraChance = 0.16;
+      }
+      interval = Math.max(this.challenge ? 0.3 : 0.17, interval / stageSpawnRate) * (this.anomaly?.spawn ?? 1) * (boss ? 2.2 : 1) / difficultyScale / depthSpawnRate;
       this.spawnTimer += interval * this.random.range(0.72, 1.25);
       this.spawnDirectedEnemy();
-      const extraChance = this.challenge ? 0.05 : 0.16;
-      if (enemyTier > 6 && this.random.next() < extraChance) this.spawnDirectedEnemy();
+      if (this.random.next() < extraChance) this.spawnDirectedEnemy();
     }
   }
 
@@ -959,7 +994,7 @@ export class GameEngine {
       : (1 + (this.sector - 1) * 0.2 + this.elapsed * 0.0015) * this.infiniteNormalHealthScale * (this.difficulty === 'abyss' ? ABYSS_MODIFIER.health : 1) * (this.anomaly?.hp ?? 1);
     const hp = baseHp * healthScale * (elite ? 2.8 : 1);
     const damageScale = this.challenge
-      ? this.challenge.enemyDamage * (1 + this.elapsed * 0.0005)
+      ? this.challenge.enemyDamage * (1 + this.elapsed * 0.0012)
       : (1 + (this.sector - 1) * 0.055) * (this.difficulty === 'abyss' ? ABYSS_MODIFIER.damage : 1);
     const enemy: Enemy = {
       id: this.nextId++, kind, x, y, vx: 0, vy: 0, radius: radius * (elite ? 1.22 : 1),
@@ -981,7 +1016,10 @@ export class GameEngine {
     const tier = this.bossTier;
     const definition = BOSS_DEFINITIONS[kind];
     const hp = 1250 * (1 + (tier - 1) * 0.82) * (this.challenge?.bossHealth ?? 1) * Math.pow(INFINITE_DEPTH_SCALING.bossHealth, this.infiniteDepth) * (this.difficulty === 'abyss' ? ABYSS_MODIFIER.bossHealth : 1);
-    const bossDamageScale = this.challenge ? 1 + (this.challenge.enemyDamage - 1) * 0.65 : 1;
+    // A boss contact or shot is a serious hit, but it should never erase half
+    // an endgame frame. The scaled damage is damped for the boss only; normal
+    // enemies keep the full stage curve.
+    const bossDamageScale = this.challenge ? 0.6 + this.challenge.enemyDamage * 0.4 : 1;
     const enemy: Enemy = {
       id: this.nextId++, kind: 'boss', x: W / 2, y: 115, vx: 0, vy: 0, radius: definition.radius,
       hp, maxHp: hp, speed: (48 + tier * 3) * definition.speed, damage: (26 + tier * 3) * bossDamageScale, xp: (100 + tier * 20) * this.combatXpScale,
@@ -1011,7 +1049,7 @@ export class GameEngine {
     if (rift.progress >= rift.duration) {
       const p = this.player;
       p.sync = Math.min(100, p.sync + 35);
-      p.hp = Math.min(p.stats.maxHp, p.hp + p.stats.maxHp * 0.15);
+      p.hp = Math.min(p.stats.maxHp, p.hp + p.stats.maxHp * 0.09);
       this.score += 1200 * (this.difficulty === 'abyss' ? 1.5 : 1);
       for (let i = 0; i < 6; i++) {
         const angle = i * TAU / 6;
@@ -1054,9 +1092,9 @@ export class GameEngine {
       } else if (enemy.kind === 'gunner') {
         const direction = dist > 390 ? 1 : dist < 275 ? -0.8 : 0;
         mx = nx * direction - ny * 0.55; my = ny * direction + nx * 0.55;
-        enemy.fireTimer -= scaledDt;
+        enemy.fireTimer -= scaledDt * this.enemyFireRateScale;
         if (enemy.fireTimer <= 0 && dist < 700) {
-          this.enemyShot(enemy.x, enemy.y, enemy.angle, 250, enemy.damage, 6);
+          this.enemyShot(enemy.x, enemy.y, enemy.angle, 265 * this.enemyProjectileScale, enemy.damage, 6);
           enemy.fireTimer = this.random.range(1.8, 2.5);
         }
       } else if (enemy.kind === 'sniper') {
@@ -1069,19 +1107,19 @@ export class GameEngine {
         }
         if (enemy.telegraph > 0) {
           enemy.angle = enemy.lockedAngle;
-          enemy.telegraph -= scaledDt;
+          enemy.telegraph -= scaledDt * this.enemyFireRateScale;
           mx = my = 0;
           if (enemy.telegraph <= 0) {
-            this.enemyShot(enemy.x, enemy.y, enemy.lockedAngle, 520, enemy.damage * 1.25, 7);
+            this.enemyShot(enemy.x, enemy.y, enemy.lockedAngle, 520 * this.enemyProjectileScale, enemy.damage * 1.25, 7);
             enemy.fireTimer = 3.2;
           }
         }
       } else if (enemy.kind === 'weaver') {
         const direction = dist > 330 ? 0.8 : dist < 240 ? -0.6 : 0;
         mx = nx * direction - ny * 0.85; my = ny * direction + nx * 0.85;
-        enemy.fireTimer -= scaledDt;
+        enemy.fireTimer -= scaledDt * this.enemyFireRateScale;
         if (enemy.fireTimer <= 0) {
-          for (let i = 0; i < 6; i++) this.enemyShot(enemy.x, enemy.y, i * TAU / 6 + enemy.age * 0.3, 175, enemy.damage * 0.75, 5);
+          for (let i = 0; i < 6; i++) this.enemyShot(enemy.x, enemy.y, i * TAU / 6 + enemy.age * 0.3, 175 * this.enemyProjectileScale, enemy.damage * 0.75, 5);
           enemy.fireTimer = 3;
         }
       } else if (enemy.kind === 'boss') {
@@ -1103,7 +1141,7 @@ export class GameEngine {
       enemy.y = clamp(enemy.y, 30, H - 30);
 
       if (dist < p.radius + enemy.radius + 2 && p.invulnerable <= 0) {
-        this.hurtPlayer(enemy.damage);
+        this.hurtPlayer(enemy.damage * CONTACT_DAMAGE_SCALE);
         p.vx = nx * 260; p.vy = ny * 260;
         enemy.vx = -nx * 120; enemy.vy = -ny * 120;
       }
@@ -1629,7 +1667,10 @@ export class GameEngine {
 
   private fireBossShot(enemy: Enemy, angle: number, speed: number, damageScale: number, radius = 6) {
     const definition = BOSS_DEFINITIONS[enemy.bossKind ?? 'warden'];
-    this.enemyShot(enemy.x, enemy.y, angle, speed, enemy.damage * damageScale, radius, definition.color);
+    // Boss patterns are wide and slow by design, but they still have to be
+    // able to reach a moving frame or the boss fight is the safest part of a
+    // stage. The scale is shared with normal fire so it never goes wild.
+    this.enemyShot(enemy.x, enemy.y, angle, speed * this.enemyProjectileScale, enemy.damage * damageScale, radius, definition.color);
   }
 
   private damageEnemy(enemy: Enemy, baseDamage: number, source: 'player' | 'echo') {
@@ -1687,7 +1728,7 @@ export class GameEngine {
         return;
       }
       this.pendingBossDraft = true;
-      this.player.hp = Math.min(this.player.stats.maxHp, this.player.hp + this.player.stats.maxHp * 0.25);
+      this.player.hp = Math.min(this.player.stats.maxHp, this.player.hp + this.player.stats.maxHp * 0.12);
       this.player.sync = 100;
       this.rerolls++;
       this.sectorTime = SECTOR_DURATION - 6;
@@ -1700,8 +1741,12 @@ export class GameEngine {
       for (let i = 0; i < 2; i++) this.spawnEnemy('mite', enemy.x + (i ? 20 : -20), enemy.y + this.random.range(-15, 15));
     }
     this.pickups.push({ x: enemy.x, y: enemy.y, vx: this.random.range(-45, 45), vy: this.random.range(-45, 45), value: enemy.xp, kind: 'xp', age: 0 });
-    if (this.random.next() < (this.player.hp < this.player.stats.maxHp * 0.45 ? 0.055 : 0.018)) {
-      this.pickups.push({ x: enemy.x + 12, y: enemy.y, vx: 0, vy: 0, value: 0.18, kind: 'health', age: 0 });
+    // Health drops are the main sustain valve, so they only appear once the
+    // frame is actually hurt, and they trickle in rather than replacing a
+    // whole bar. Clearing a stage near full HP has to be earned.
+    const missingHp = 1 - this.player.hp / this.player.stats.maxHp;
+    if (missingHp > 0.1 && this.random.next() < missingHp * 0.018) {
+      this.pickups.push({ x: enemy.x + 12, y: enemy.y, vx: 0, vy: 0, value: 0.07, kind: 'health', age: 0 });
     }
     if (this.random.next() < this.player.stats.lifeSteal) this.player.hp = Math.min(this.player.stats.maxHp, this.player.hp + this.player.stats.maxHp * 0.025);
   }

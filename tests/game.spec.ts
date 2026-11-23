@@ -363,6 +363,93 @@ test('action dock runs Q, E, R left to right and each key fires its own ability'
   await expect.poll(async () => (await pilot()).overdrive).toBeGreaterThan(0);
 });
 
+test('LEVEL threat rises with the stage instead of levelling off', async ({ page }) => {
+  const curve = await page.evaluate(async () => {
+    const modulePath = '/src/game/levels.ts';
+    const { LEVELS } = await import(/* @vite-ignore */ modulePath);
+    const engine = (window as any).__ECHO__;
+    const sample = async (stage: number) => {
+      await engine.start('wraith', 'standard', `THREAT-${stage}`, 'level', stage);
+      engine.elapsed = 0;
+      engine.sector = engine.challenge.enemyTier;
+      engine.anomaly = null;
+      engine.random.next = () => 0.99;
+      engine.spawnEnemy('gunner', 500, 500, false);
+      const gunner = engine.enemies[0];
+      engine.spawnBoss();
+      const boss = engine.enemies.find((enemy: any) => enemy.kind === 'boss');
+      return {
+        fire: engine.enemyFireRateScale,
+        projectile: engine.enemyProjectileScale,
+        gunnerDamage: gunner.damage,
+        bossDamage: boss.damage,
+      };
+    };
+    return {
+      first: await sample(1),
+      tenth: await sample(10),
+      last: await sample(100),
+      stages: LEVELS.map((level: any) => ({
+        id: level.id, fire: level.enemyFireRate, projectile: level.enemyProjectileSpeed, spawn: level.spawnRate, damage: level.enemyDamage, hp: level.enemyHealth,
+      })),
+      playerSpeed: (await engine.start('wraith', 'standard', 'THREAT-SPEED', 'level', 1), engine.player.stats.moveSpeed),
+    };
+  });
+
+  // Every monotonic threat channel must keep rising across the campaign.
+  const stages = curve.stages;
+  for (let index = 1; index < stages.length; index++) {
+    const previous = stages[index - 1];
+    const current = stages[index];
+    expect(current.fire).toBeGreaterThanOrEqual(previous.fire);
+    expect(current.projectile).toBeGreaterThanOrEqual(previous.projectile);
+    expect(current.spawn).toBeGreaterThanOrEqual(previous.spawn);
+    expect(current.damage).toBeGreaterThan(previous.damage);
+    expect(current.hp).toBeGreaterThan(previous.hp);
+  }
+  expect(stages[0].fire).toBe(1);
+  expect(stages[0].projectile).toBe(1);
+  expect(stages[99].fire).toBeGreaterThan(2.5);
+  expect(stages[99].projectile).toBeGreaterThan(1.6);
+  expect(stages[99].damage).toBeGreaterThan(stages[0].damage * 3);
+
+  // Late-stage fire has to outpace a walking frame, otherwise bullets can
+  // simply be outrun forever. Opening shots stay slower so stage 1 is fair.
+  expect(265 * curve.tenth.projectile).toBeGreaterThan(curve.playerSpeed);
+  expect(265 * curve.last.projectile).toBeGreaterThan(curve.playerSpeed * 1.5);
+  expect(265 * curve.first.projectile).toBeLessThanOrEqual(curve.playerSpeed);
+  expect(curve.first.fire).toBe(1);
+  expect(curve.last.fire).toBeGreaterThan(curve.tenth.fire);
+  expect(curve.last.projectile).toBeGreaterThan(curve.tenth.projectile);
+
+  // A frame must survive a real number of clean boss hits at the cap. The
+  // comparison uses the frame the stage is actually played with: the campaign
+  // loadout bought by clearing the previous stages.
+  const hits = await page.evaluate(async () => {
+    const campaignPath = '/src/game/campaign.ts';
+    const campaign = await import(/* @vite-ignore */ campaignPath);
+    localStorage.setItem(campaign.CAMPAIGN_XP_KEY, '0');
+    localStorage.setItem(campaign.CAMPAIGN_LOADOUT_KEY, '{}');
+    for (let previous = 1; previous < 100; previous++) {
+      localStorage.setItem(campaign.CAMPAIGN_XP_KEY, String(campaign.readCampaignXp() + campaign.getStageXp(previous, true)));
+      let bought = true;
+      while (bought) {
+        bought = false;
+        for (const id of ['damage', 'fireRate', 'vitality', 'echoDamage', 'vitality', 'damage', 'fireRate', 'vitality']) {
+          if (campaign.purchaseInitialBonus(id).changed) bought = true;
+        }
+      }
+    }
+    const engine = (window as any).__ECHO__;
+    await engine.start('wraith', 'standard', 'THREAT-HITS', 'level', 100);
+    engine.enemies = []; engine.spawnBoss();
+    const boss = engine.enemies.find((enemy: any) => enemy.kind === 'boss');
+    return { hp: engine.player.stats.maxHp, bossDamage: boss.damage, ranks: engine.initialBonusRanks };
+  });
+  expect(hits.ranks).toBeGreaterThan(20);
+  expect(hits.hp / hits.bossDamage).toBeGreaterThanOrEqual(6);
+});
+
 test('SYNC RIFT retains progress outside and resumes in both modes', async ({ page }) => {
   for (const gameMode of ['infinite', 'level'] as const) {
     await page.evaluate(async ({ gameMode }) => {
@@ -401,7 +488,9 @@ test('SYNC RIFT retains progress outside and resumes in both modes', async ({ pa
     await expect.poll(async () => (await snapshot(page)).rift, { timeout: 7000 }).toBeNull();
     const reward = await page.evaluate(() => ({ sync: (window as any).__ECHO__.player.sync, hp: (window as any).__ECHO__.player.hp, maxHp: (window as any).__ECHO__.player.stats.maxHp }));
     expect(reward.sync).toBeGreaterThanOrEqual(35);
-    expect(reward.hp).toBeCloseTo(50 + reward.maxHp * 0.15, 5);
+    // The rift is a top-up, not a full reset: sustain stays below the damage
+    // a stage can deal, so a clean clear still has to be earned.
+    expect(reward.hp).toBeCloseTo(50 + reward.maxHp * 0.09, 5);
   }
 });
 

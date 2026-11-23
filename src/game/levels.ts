@@ -24,6 +24,8 @@ export interface LevelDefinition {
   enemyHealth: number;
   enemyDamage: number;
   enemySpeed: number;
+  enemyFireRate: number;
+  enemyProjectileSpeed: number;
   spawnRate: number;
   eliteBonus: number;
   hasBoss: boolean;
@@ -59,12 +61,18 @@ function createLevel(id: number): LevelDefinition {
     // Director complexity grows separately from raw stats and remains bounded.
     enemyTier: Math.min(13, 1 + Math.floor((id - 1) / 8)),
     // 2% compound HP leaves room for draft growth and avoids bullet-sponge
-    // stages; enemy damage compounds more gently at 1.3% per stage.
+    // stages. Damage per hit stays small so a mistake is cheap and repeated
+    // mistakes are what end a run; the field itself carries the escalation
+    // through density, cadence and projectile speed.
     enemyHealth,
-    enemyDamage: Math.pow(1.013, id - 1),
-    enemySpeed: 1 + Math.min(0.22, (id - 1) * 0.0022),
-    spawnRate: 1 + Math.min(0.15, (id - 1) * 0.0015),
-    eliteBonus: Math.min(0.06, (id - 1) * 0.0006),
+    enemyDamage: 0.5 * Math.pow(1.0155, id - 1),
+    enemySpeed: 1 + Math.min(0.3, (id - 1) * 0.003),
+    // Cadence rises much faster than raw damage; the arena stays busy while
+    // each individual shot remains survivable.
+    enemyFireRate: 1 + Math.min(2.2, (id - 1) * 0.022),
+    enemyProjectileSpeed: 1 + Math.min(0.85, (id - 1) * 0.0085),
+    spawnRate: 1 + Math.min(0.45, (id - 1) * 0.0045),
+    eliteBonus: Math.min(0.12, (id - 1) * 0.0012),
     hasBoss,
     bossTier,
     bossKind: id === LEVEL_COUNT ? 'warden' : bossKindForEncounter(id),
