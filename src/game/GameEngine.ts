@@ -2,7 +2,7 @@ import { SoundSystem } from './audio';
 import { BASTION_COLOR, CORES, ECHO_COLOR } from './types';
 import { UPGRADES, UPGRADE_BY_ID } from './upgrades';
 import { BOSS_DEFINITIONS, bossKindForEncounter } from './bosses';
-import { buildBackgroundSprite, drawGlow, glowSprite } from './sprites';
+import { beamSprite, buildBackgroundSprite, drawBeam, drawGlow, glowSprite, haloSprite } from './sprites';
 import type { BossKind } from './bosses';
 import { LEVELS, LEVEL_STARTING_MODIFIER, formatStage } from './levels';
 import type { LevelDefinition } from './levels';
@@ -52,12 +52,29 @@ const formatSeed = () => Math.random().toString(36).slice(2, 8).toUpperCase();
 // the most populated lane keeps the cannon on the densest group instead of the
 // pointer, which is what makes the skill read as a screen-wide sweep.
 const AIM_BUCKETS = 16;
+// Once the coarse lanes pick the crowd, the cannon sweeps finer candidates
+// around them. A 22.5-degree lane is far wider than the lethal core, so
+// stopping there would leave most of the pack in the "wounded" fringe.
+const RAIL_FINE_STEPS = 12;
+const RAIL_FINE_SPAN = Math.PI / 16;
 const RAIL_LOCK_TIME = 0.45;
-// The rail is a wide lance: everything inside this half-width is swept, which
-// is what lets one cast clear a whole side of the field.
-const RAIL_HALF_WIDTH = 150;
+// The rail is a lance with a hot centre and a weaker fringe. Only targets
+// close to the firing line are erased; anything caught near the edge takes
+// heavy damage instead of dying, so the cast rewards aiming at the crowd
+// rather than sweeping a whole side of the screen for free.
+const RAIL_HALF_WIDTH = 120;
+const RAIL_CORE_HALF_WIDTH = 45;
 const RAIL_LENGTH = 1750;
+// Guaranteed erase for normal enemies on the firing line. The fringe deals a
+// heavy but survivable hit: a fraction of the target's own health, with a
+// floor in weapon damage so early stages still feel the cast.
 const RAIL_NORMAL_DAMAGE = 30;
+const RAIL_EDGE_HP_FRACTION = 0.4;
+const RAIL_EDGE_DAMAGE_FLOOR = 4;
+// Ramming is the least readable damage source, so it is damped relative to
+// bullets. Without this a single late-stage tank touch removes a third of the
+// frame before a draft can answer it.
+const CONTACT_DAMAGE_SCALE = 0.8;
 const angleInBucket = (angle: number, bucket: number) => {
   const width = TAU / AIM_BUCKETS;
   return Math.abs(angleDelta(bucket * width + width / 2, angle)) <= width / 2;
@@ -115,6 +132,7 @@ interface Particle {
 interface Pickup { x: number; y: number; vx: number; vy: number; value: number; kind: 'xp' | 'health'; age: number; }
 interface Beam {
   points: { x: number; y: number }[]; life: number; maxLife: number; color: string; kind?: 'arc' | 'rail';
+  coreHalfWidth?: number;
   tickDamage?: number; tickTimer?: number; tickInterval?: number; ticksLeft?: number; halfWidth?: number;
 }
 interface FloatText { x: number; y: number; text: string; color: string; life: number; size: number; }
@@ -298,6 +316,24 @@ export class GameEngine {
   private get enemyRosterTier() {
     if (this.challenge) return this.challenge.enemyTier;
     return Math.min(ENEMY_ROSTERS.length, 1 + Math.floor(this.sector / 2));
+  }
+
+  // Fire cadence is the main threat lever. Enemy durability stays readable
+  // because a draft build outpaces linear HP growth, but shooting faster
+  // keeps the screen busy without turning enemies into bullet sponges.
+  private get enemyFireRateScale() {
+    if (this.challenge) return this.challenge.enemyFireRate;
+    const depth = this.infiniteDepth;
+    const abyss = this.difficulty === 'abyss' ? 1.18 : 1;
+    return Math.min(3.4, 1 + (this.sector - 1) * 0.05 + depth * 0.14) * abyss;
+  }
+
+  // Enemy shots used to cap out below the frame's move speed (250 vs 285), so
+  // a player who simply kept moving could never be hit. Projectiles now gain
+  // speed with the stage and stay faster than a walking frame.
+  private get enemyProjectileScale() {
+    if (this.challenge) return this.challenge.enemyProjectileSpeed;
+    return Math.min(1.9, 1 + (this.sector - 1) * 0.03 + this.infiniteDepth * 0.06);
   }
 
   private get tankLimit() {
@@ -869,14 +905,27 @@ export class GameEngine {
       const difficultyScale = this.difficulty === 'abyss' ? ABYSS_MODIFIER.spawnRate : 1;
       const depthSpawnRate = this.challenge ? 1 : 1 + depth * INFINITE_DEPTH_SCALING.spawnRate;
       const stageSpawnRate = this.challenge?.spawnRate ?? 1;
-      const baseInterval = this.challenge
-        ? 0.95 + enemyTier * 0.055 - this.elapsed * 0.0001
-        : 1.0 - enemyTier * 0.052 - this.elapsed * 0.00045;
-      const interval = Math.max(this.challenge ? 0.65 : 0.17, baseInterval / stageSpawnRate) * (this.anomaly?.spawn ?? 1) * (boss ? 2.2 : 1) / difficultyScale / depthSpawnRate;
+      let interval: number;
+      let extraChance: number;
+      if (this.challenge) {
+        // LEVEL keeps its arena populated and tightens it across the stage.
+        // The combat window is short, so a steady trickle is what makes the
+        // difficulty curve visible at all. The old curve grew the interval
+        // with the tier, which made late stages the emptiest.
+        const progress = Math.min(1, this.elapsed / this.challenge.combatDuration);
+        interval = 0.6 - enemyTier * 0.016 - this.elapsed * 0.0008;
+        interval *= 1 + (1 - progress) * 0.7;
+        // Keeping up is the challenge, so the opening spawns are calm and the
+        // trouble starts once the build has picks behind it.
+        extraChance = 0.18 + enemyTier * 0.02 - (1 - progress) * 0.12;
+      } else {
+        interval = 1.0 - enemyTier * 0.052 - this.elapsed * 0.00045;
+        extraChance = 0.16;
+      }
+      interval = Math.max(this.challenge ? 0.3 : 0.17, interval / stageSpawnRate) * (this.anomaly?.spawn ?? 1) * (boss ? 2.2 : 1) / difficultyScale / depthSpawnRate;
       this.spawnTimer += interval * this.random.range(0.72, 1.25);
       this.spawnDirectedEnemy();
-      const extraChance = this.challenge ? 0.05 : 0.16;
-      if (enemyTier > 6 && this.random.next() < extraChance) this.spawnDirectedEnemy();
+      if (this.random.next() < extraChance) this.spawnDirectedEnemy();
     }
   }
 
@@ -959,7 +1008,7 @@ export class GameEngine {
       : (1 + (this.sector - 1) * 0.2 + this.elapsed * 0.0015) * this.infiniteNormalHealthScale * (this.difficulty === 'abyss' ? ABYSS_MODIFIER.health : 1) * (this.anomaly?.hp ?? 1);
     const hp = baseHp * healthScale * (elite ? 2.8 : 1);
     const damageScale = this.challenge
-      ? this.challenge.enemyDamage * (1 + this.elapsed * 0.0005)
+      ? this.challenge.enemyDamage * (1 + this.elapsed * 0.0012)
       : (1 + (this.sector - 1) * 0.055) * (this.difficulty === 'abyss' ? ABYSS_MODIFIER.damage : 1);
     const enemy: Enemy = {
       id: this.nextId++, kind, x, y, vx: 0, vy: 0, radius: radius * (elite ? 1.22 : 1),
@@ -981,7 +1030,10 @@ export class GameEngine {
     const tier = this.bossTier;
     const definition = BOSS_DEFINITIONS[kind];
     const hp = 1250 * (1 + (tier - 1) * 0.82) * (this.challenge?.bossHealth ?? 1) * Math.pow(INFINITE_DEPTH_SCALING.bossHealth, this.infiniteDepth) * (this.difficulty === 'abyss' ? ABYSS_MODIFIER.bossHealth : 1);
-    const bossDamageScale = this.challenge ? 1 + (this.challenge.enemyDamage - 1) * 0.65 : 1;
+    // A boss contact or shot is a serious hit, but it should never erase half
+    // an endgame frame. The scaled damage is damped for the boss only; normal
+    // enemies keep the full stage curve.
+    const bossDamageScale = this.challenge ? 0.6 + this.challenge.enemyDamage * 0.4 : 1;
     const enemy: Enemy = {
       id: this.nextId++, kind: 'boss', x: W / 2, y: 115, vx: 0, vy: 0, radius: definition.radius,
       hp, maxHp: hp, speed: (48 + tier * 3) * definition.speed, damage: (26 + tier * 3) * bossDamageScale, xp: (100 + tier * 20) * this.combatXpScale,
@@ -1011,7 +1063,7 @@ export class GameEngine {
     if (rift.progress >= rift.duration) {
       const p = this.player;
       p.sync = Math.min(100, p.sync + 35);
-      p.hp = Math.min(p.stats.maxHp, p.hp + p.stats.maxHp * 0.15);
+      p.hp = Math.min(p.stats.maxHp, p.hp + p.stats.maxHp * 0.09);
       this.score += 1200 * (this.difficulty === 'abyss' ? 1.5 : 1);
       for (let i = 0; i < 6; i++) {
         const angle = i * TAU / 6;
@@ -1054,9 +1106,9 @@ export class GameEngine {
       } else if (enemy.kind === 'gunner') {
         const direction = dist > 390 ? 1 : dist < 275 ? -0.8 : 0;
         mx = nx * direction - ny * 0.55; my = ny * direction + nx * 0.55;
-        enemy.fireTimer -= scaledDt;
+        enemy.fireTimer -= scaledDt * this.enemyFireRateScale;
         if (enemy.fireTimer <= 0 && dist < 700) {
-          this.enemyShot(enemy.x, enemy.y, enemy.angle, 250, enemy.damage, 6);
+          this.enemyShot(enemy.x, enemy.y, enemy.angle, 265 * this.enemyProjectileScale, enemy.damage, 6);
           enemy.fireTimer = this.random.range(1.8, 2.5);
         }
       } else if (enemy.kind === 'sniper') {
@@ -1069,19 +1121,19 @@ export class GameEngine {
         }
         if (enemy.telegraph > 0) {
           enemy.angle = enemy.lockedAngle;
-          enemy.telegraph -= scaledDt;
+          enemy.telegraph -= scaledDt * this.enemyFireRateScale;
           mx = my = 0;
           if (enemy.telegraph <= 0) {
-            this.enemyShot(enemy.x, enemy.y, enemy.lockedAngle, 520, enemy.damage * 1.25, 7);
+            this.enemyShot(enemy.x, enemy.y, enemy.lockedAngle, 520 * this.enemyProjectileScale, enemy.damage * 1.25, 7);
             enemy.fireTimer = 3.2;
           }
         }
       } else if (enemy.kind === 'weaver') {
         const direction = dist > 330 ? 0.8 : dist < 240 ? -0.6 : 0;
         mx = nx * direction - ny * 0.85; my = ny * direction + nx * 0.85;
-        enemy.fireTimer -= scaledDt;
+        enemy.fireTimer -= scaledDt * this.enemyFireRateScale;
         if (enemy.fireTimer <= 0) {
-          for (let i = 0; i < 6; i++) this.enemyShot(enemy.x, enemy.y, i * TAU / 6 + enemy.age * 0.3, 175, enemy.damage * 0.75, 5);
+          for (let i = 0; i < 6; i++) this.enemyShot(enemy.x, enemy.y, i * TAU / 6 + enemy.age * 0.3, 175 * this.enemyProjectileScale, enemy.damage * 0.75, 5);
           enemy.fireTimer = 3;
         }
       } else if (enemy.kind === 'boss') {
@@ -1103,7 +1155,7 @@ export class GameEngine {
       enemy.y = clamp(enemy.y, 30, H - 30);
 
       if (dist < p.radius + enemy.radius + 2 && p.invulnerable <= 0) {
-        this.hurtPlayer(enemy.damage);
+        this.hurtPlayer(enemy.damage * CONTACT_DAMAGE_SCALE);
         p.vx = nx * 260; p.vy = ny * 260;
         enemy.vx = -nx * 120; enemy.vy = -ny * 120;
       }
@@ -1371,14 +1423,15 @@ export class GameEngine {
           beam.ticksLeft--;
         }
         for (const enemy of this.enemies) {
-          const reach = (beam.halfWidth ?? 24) + enemy.radius;
-          if (!enemy.dead && distanceToSegment(enemy.x, enemy.y, start.x, start.y, end.x, end.y) < reach) {
-            // The sweep already erased normal enemies; the lingering beam keeps
-            // pressuring bosses and anything that drifted into the lane.
-            const damage = enemy.kind === 'boss' ? beam.tickDamage : Math.max(beam.tickDamage, enemy.hp * 1.02);
-            this.damageEnemy(enemy, damage, 'player');
-            hits++;
-          }
+          const offset = distanceToSegment(enemy.x, enemy.y, start.x, start.y, end.x, end.y);
+          if (enemy.dead || offset >= (beam.halfWidth ?? 24) + enemy.radius) continue;
+          // The sweep already handled the opening hit. The lingering beam only
+          // keeps pressuring the centre line, so the fringe hit stays a single
+          // burst instead of turning into repeated free kills.
+          if (enemy.kind !== 'boss' && offset >= (beam.coreHalfWidth ?? 0)) continue;
+          const damage = enemy.kind === 'boss' ? beam.tickDamage : Math.max(beam.tickDamage, enemy.hp * 1.02);
+          this.damageEnemy(enemy, damage, 'player');
+          hits++;
         }
       }
       if (hits > 0) this.sound.play('arc', 0.3);
@@ -1415,19 +1468,29 @@ export class GameEngine {
       const endY = p.y + Math.sin(angle) * RAIL_LENGTH;
       return distanceToSegment(enemy.x, enemy.y, p.x, p.y, endX, endY) < RAIL_HALF_WIDTH + enemy.radius;
     };
+    // A kill on the core is worth far more than a wound on the fringe, so the
+    // score is weighted by what the cast actually does to each target.
+    const score = (angle: number) => {
+      const endX = p.x + Math.cos(angle) * RAIL_LENGTH;
+      const endY = p.y + Math.sin(angle) * RAIL_LENGTH;
+      let total = 0;
+      for (const enemy of candidates) {
+        const offset = distanceToSegment(enemy.x, enemy.y, p.x, p.y, endX, endY);
+        if (offset >= RAIL_HALF_WIDTH + enemy.radius) continue;
+        const weight = 1 + Math.min(1, 420 / Math.max(60, distance(p.x, p.y, enemy.x, enemy.y))) + Math.min(1, enemy.hp / 900);
+        total += enemy.kind === 'boss' || offset < RAIL_CORE_HALF_WIDTH ? weight * 2 : weight;
+      }
+      return total;
+    };
     let bestAngle = p.angle;
     let bestScore = -Infinity;
     for (let bucket = 0; bucket < AIM_BUCKETS; bucket++) {
       const angle = bucket * width + width / 2;
-      let score = 0;
-      for (const enemy of candidates) {
-        if (!angleInBucket(Math.atan2(enemy.y - p.y, enemy.x - p.x), bucket)) continue;
-        if (!reaches(angle, enemy)) continue;
-        // Close and heavy targets matter more, but never enough to outvote a
-        // large pack sitting on one lane.
-        score += 1 + Math.min(1, 420 / Math.max(60, distance(p.x, p.y, enemy.x, enemy.y))) + Math.min(1, enemy.hp / 900);
-      }
-      if (score > bestScore) { bestScore = score; bestAngle = angle; }
+      // Bucket membership no longer gates the score: a target on the edge of
+      // two lanes still counts for whichever beam would actually hit it.
+      if (!candidates.some(enemy => reaches(angle, enemy))) continue;
+      const value = score(angle);
+      if (value > bestScore) { bestScore = value; bestAngle = angle; }
     }
     // All lanes empty (e.g. a lone boss behind us): fall back to the target.
     if (bestScore <= 0) {
@@ -1436,6 +1499,12 @@ export class GameEngine {
         return !best || d < best.d ? { enemy, d } : best;
       }, null as { enemy: Enemy; d: number } | null);
       if (nearest) return Math.atan2(nearest.enemy.y - p.y, nearest.enemy.x - p.x);
+    }
+    // Refine within the winning lane so the hot centre sits on the pack.
+    for (let step = -RAIL_FINE_STEPS; step <= RAIL_FINE_STEPS; step++) {
+      const angle = bestAngle + (step / RAIL_FINE_STEPS) * RAIL_FINE_SPAN;
+      const value = score(angle);
+      if (value > bestScore + 1e-9) { bestScore = value; bestAngle = angle; }
     }
     return bestAngle;
   }
@@ -1462,17 +1531,27 @@ export class GameEngine {
       this.beams.push({
         points: [{ x: p.x, y: p.y }, { x: endX, y: endY }],
         life: 1, maxLife: 1, color: '#8dfff3', kind: 'rail', tickDamage: p.stats.damage * 0.75, tickTimer: 0.3, tickInterval: 0.3, ticksLeft: 3,
-        halfWidth: RAIL_HALF_WIDTH,
+        halfWidth: RAIL_HALF_WIDTH, coreHalfWidth: RAIL_CORE_HALF_WIDTH,
       });
       for (const enemy of this.enemies) {
         if (enemy.dead) continue;
-        if (distanceToSegment(enemy.x, enemy.y, p.x, p.y, endX, endY) >= RAIL_HALF_WIDTH + enemy.radius) continue;
-        // Bosses take the tuned single-target hit; every other hostile caught
-        // in the lane is erased outright so one cast reads as a full sweep.
-        const lethal = enemy.kind === 'boss'
-          ? p.stats.damage * 6
-          : Math.max(p.stats.damage * RAIL_NORMAL_DAMAGE, enemy.hp * 1.02);
-        this.damageEnemy(enemy, lethal, 'player');
+        const offset = distanceToSegment(enemy.x, enemy.y, p.x, p.y, endX, endY);
+        if (offset >= RAIL_HALF_WIDTH + enemy.radius) continue;
+        let damage: number;
+        if (enemy.kind === 'boss') {
+          // Bosses always take the tuned single-target hit.
+          damage = p.stats.damage * 6;
+        } else if (offset < RAIL_CORE_HALF_WIDTH) {
+          // Centre of the beam: simply erased, however tanky it is.
+          damage = Math.max(p.stats.damage * RAIL_NORMAL_DAMAGE, enemy.hp * 1.02);
+        } else {
+          // Fringe: heavy damage, not a guaranteed kill. Clamping below the
+          // current health keeps the band strictly "wounding" even against a
+          // nearly dead elite.
+          damage = Math.max(p.stats.damage * RAIL_EDGE_DAMAGE_FLOOR, enemy.maxHp * RAIL_EDGE_HP_FRACTION);
+          damage = Math.min(damage, enemy.hp * 0.9);
+        }
+        this.damageEnemy(enemy, damage, 'player');
       }
       for (let i = 0; i < 28; i++) {
         const t = Math.random();
@@ -1629,7 +1708,10 @@ export class GameEngine {
 
   private fireBossShot(enemy: Enemy, angle: number, speed: number, damageScale: number, radius = 6) {
     const definition = BOSS_DEFINITIONS[enemy.bossKind ?? 'warden'];
-    this.enemyShot(enemy.x, enemy.y, angle, speed, enemy.damage * damageScale, radius, definition.color);
+    // Boss patterns are wide and slow by design, but they still have to be
+    // able to reach a moving frame or the boss fight is the safest part of a
+    // stage. The scale is shared with normal fire so it never goes wild.
+    this.enemyShot(enemy.x, enemy.y, angle, speed * this.enemyProjectileScale, enemy.damage * damageScale, radius, definition.color);
   }
 
   private damageEnemy(enemy: Enemy, baseDamage: number, source: 'player' | 'echo') {
@@ -1687,7 +1769,7 @@ export class GameEngine {
         return;
       }
       this.pendingBossDraft = true;
-      this.player.hp = Math.min(this.player.stats.maxHp, this.player.hp + this.player.stats.maxHp * 0.25);
+      this.player.hp = Math.min(this.player.stats.maxHp, this.player.hp + this.player.stats.maxHp * 0.12);
       this.player.sync = 100;
       this.rerolls++;
       this.sectorTime = SECTOR_DURATION - 6;
@@ -1700,8 +1782,12 @@ export class GameEngine {
       for (let i = 0; i < 2; i++) this.spawnEnemy('mite', enemy.x + (i ? 20 : -20), enemy.y + this.random.range(-15, 15));
     }
     this.pickups.push({ x: enemy.x, y: enemy.y, vx: this.random.range(-45, 45), vy: this.random.range(-45, 45), value: enemy.xp, kind: 'xp', age: 0 });
-    if (this.random.next() < (this.player.hp < this.player.stats.maxHp * 0.45 ? 0.055 : 0.018)) {
-      this.pickups.push({ x: enemy.x + 12, y: enemy.y, vx: 0, vy: 0, value: 0.18, kind: 'health', age: 0 });
+    // Health drops are the main sustain valve, so they only appear once the
+    // frame is actually hurt, and they trickle in rather than replacing a
+    // whole bar. Clearing a stage near full HP has to be earned.
+    const missingHp = 1 - this.player.hp / this.player.stats.maxHp;
+    if (missingHp > 0.1 && this.random.next() < missingHp * 0.018) {
+      this.pickups.push({ x: enemy.x + 12, y: enemy.y, vx: 0, vy: 0, value: 0.07, kind: 'health', age: 0 });
     }
     if (this.random.next() < this.player.stats.lifeSteal) this.player.hp = Math.min(this.player.stats.maxHp, this.player.hp + this.player.stats.maxHp * 0.025);
   }
@@ -2146,7 +2232,9 @@ export class GameEngine {
       const pulse = 1 + Math.sin(time * 5 + pickup.x) * 0.12;
       ctx.save(); ctx.translate(pickup.x, pickup.y); ctx.rotate(time * 1.4 + pickup.age);
       ctx.fillStyle = color;
-      drawGlow(ctx, glowSprite(color, 15), 0, 0, pulse);
+      // The shard keeps its original size and silhouette; the halo behind it
+      // is a soft bloom only, so the bright core is the shard itself.
+      drawGlow(ctx, haloSprite(color, 11, 0.62), 0, 0, pulse);
       const size = (pickup.kind === 'health' ? 8 : pickup.value >= 20 ? 8 : 5) * pulse;
       if (pickup.kind === 'health') {
         ctx.fillRect(-3, -10, 6, 20); ctx.fillRect(-10, -3, 20, 6);
@@ -2165,12 +2253,16 @@ export class GameEngine {
       if (beam.kind === 'rail') {
         const [start, end] = beam.points;
         if (start && end) {
-          ctx.globalAlpha = alpha * 0.22; ctx.strokeStyle = beam.color; ctx.shadowColor = beam.color; ctx.shadowBlur = 34;
-          ctx.lineCap = 'round'; ctx.lineWidth = (beam.halfWidth ?? 24) * 1.45 * (0.5 + alpha * 0.5);
-          ctx.beginPath(); ctx.moveTo(start.x, start.y); ctx.lineTo(end.x, end.y); ctx.stroke();
-          ctx.globalAlpha = alpha; ctx.shadowBlur = 28; ctx.lineWidth = 18 * alpha + 2;
-          ctx.stroke();
-          ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 3; ctx.stroke(); ctx.lineCap = 'butt';
+          // Baked bands instead of a shadowed stroke: a glow on a lance this
+          // long costs more than a whole frame. The wide band shows the reach
+          // of the cast, the narrow inner band is the lethal core.
+          const swell = 0.5 + alpha * 0.5;
+          ctx.globalAlpha = alpha * 0.45;
+          drawBeam(ctx, beamSprite(beam.color, RAIL_LENGTH, (beam.halfWidth ?? 24) * 2.9), start.x, start.y, end.x, end.y, swell);
+          ctx.globalAlpha = alpha * 0.9;
+          drawBeam(ctx, beamSprite(beam.color, RAIL_LENGTH, (beam.coreHalfWidth ?? 24) * 2), start.x, start.y, end.x, end.y, swell);
+          ctx.globalAlpha = alpha;
+          drawBeam(ctx, beamSprite('#ffffff', RAIL_LENGTH, 4), start.x, start.y, end.x, end.y, swell);
         }
         continue;
       }
@@ -2201,7 +2293,7 @@ export class GameEngine {
       if (projectile.friendly) {
         // A rotated blit costs about 4x a plain one, so only the bloom is a
         // sprite here; the dart itself stays a cheap rotated fillRect.
-        drawGlow(ctx, glowSprite(projectile.color, projectile.radius * 2.6), projectile.x, projectile.y, 0.85);
+        drawGlow(ctx, haloSprite(projectile.color, projectile.radius * 3.2, 0.48), projectile.x, projectile.y, 1);
         ctx.save();
         ctx.translate(projectile.x, projectile.y);
         ctx.rotate(Math.atan2(projectile.vy, projectile.vx));
@@ -2209,9 +2301,9 @@ export class GameEngine {
         ctx.fillRect(-projectile.radius * 2.8, -projectile.radius * 0.55, projectile.radius * 4.5, projectile.radius * 1.1);
         ctx.restore();
       } else {
-        // Hostile bullets stay crisp and readable: a small bright core plus a
-        // baked halo, with the diagnostic ring kept as a cheap stroke.
-        drawGlow(ctx, glowSprite(projectile.color, projectile.radius * 2.2), projectile.x, projectile.y, 1);
+        // Hostile bullets keep the original look: a bright core, a thin
+        // diagnostic ring, and a soft halo that stays behind both.
+        drawGlow(ctx, haloSprite(projectile.color, projectile.radius * 2.9, 0.52), projectile.x, projectile.y, 1);
         ctx.fillStyle = projectile.color;
         ctx.beginPath(); ctx.arc(projectile.x, projectile.y, projectile.radius, 0, TAU); ctx.fill();
         ctx.strokeStyle = 'rgba(255,180,190,.7)'; ctx.lineWidth = 1;

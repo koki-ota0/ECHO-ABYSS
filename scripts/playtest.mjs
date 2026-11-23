@@ -79,6 +79,22 @@ if (fastMode) {
     engine.render = time => { if (frame++ % 6 === 0) render(time); };
   });
 }
+// Wall-clock HP sampling hides chip damage that gets healed between frames, so
+// wrap the real damage entry point and record every point that lands.
+await page.evaluate(() => {
+  const engine = window.__ECHO__;
+  const protoHurt = Object.getPrototypeOf(engine).hurtPlayer;
+  window.__PRESSURE__ = { taken: 0, hits: 0, minHp: engine.player.hp, hooked: engine.hurtPlayer !== protoHurt };
+  const original = engine.hurtPlayer.bind(engine);
+  engine.hurtPlayer = raw => {
+    const before = engine.player.hp;
+    original(raw);
+    const delta = before - engine.player.hp;
+    if (delta > 0) { window.__PRESSURE__.taken += delta; window.__PRESSURE__.hits += 1; }
+    window.__PRESSURE__.minHp = Math.min(window.__PRESSURE__.minHp, engine.player.hp);
+  };
+  window.__PRESSURE__.hooked = engine.hurtPlayer !== protoHurt;
+});
 
 const started = Date.now();
 console.log(`MODE ${gameMode}${gameMode === 'level' ? ` ${String(challengeLevel).padStart(3, '0')}` : ''} // ${difficulty} // ${core} // ${runSeed ?? 'RANDOM'}`);
@@ -201,6 +217,7 @@ while ((Date.now() - started) / 1000 < duration) {
 }
 
 await page.screenshot({ path: 'test-results/playtest-final.png' });
+console.log('PRESSURE', await page.evaluate(() => ({ ...window.__PRESSURE__, maxHp: window.__ECHO__.player.stats.maxHp })));
 console.log('FINAL', await page.evaluate(() => ({ ...window.__ECHO__.getDebugSnapshot(), kills: window.__ECHO__.kills, elapsed: window.__ECHO__.elapsed, stacks: window.__ECHO__.stacks, campaignXp: Number(localStorage.getItem('echo-abyss-campaign-xp') ?? 0), victory: window.__ECHO__.status === 'gameover' && window.__ECHO__.player.hp > 0 })));
 console.log('DRAFTS', drafts, 'ERRORS', errors, 'NAVIGATIONS', navigations);
 await browser.close();

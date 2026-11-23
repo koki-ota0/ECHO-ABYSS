@@ -58,6 +58,35 @@ export function glowSprite(color: string, radius: number, coreScale = 1): Sprite
   return sprite;
 }
 
+/**
+ * A pure bloom: no opaque core, just a soft radial falloff. This is what a
+ * shadowBlur halo looks like when the shape itself supplies the solid colour,
+ * so it reproduces the original bullet and shard look instead of a bright ball
+ * that swallows the sprite it is supposed to sit behind.
+ */
+export function haloSprite(color: string, spread: number, intensity = 0.55): Sprite {
+  const key = `halo:${color}:${spread}:${intensity}`;
+  const cached = cache.get(key);
+  if (cached) return cached;
+
+  const size = Math.ceil(spread * 2) + 2;
+  const center = size / 2;
+  const sprite = document.createElement('canvas');
+  sprite.width = size;
+  sprite.height = size;
+  const ctx = sprite.getContext('2d')!;
+  const gradient = ctx.createRadialGradient(center, center, 0, center, center, spread);
+  gradient.addColorStop(0, rgba(color, intensity));
+  gradient.addColorStop(0.28, rgba(color, intensity * 0.62));
+  gradient.addColorStop(0.55, rgba(color, intensity * 0.24));
+  gradient.addColorStop(0.8, rgba(color, intensity * 0.07));
+  gradient.addColorStop(1, rgba(color, 0));
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+  cache.set(key, sprite);
+  return sprite;
+}
+
 /** Draws a glow sprite centred on (x, y). */
 export function drawGlow(ctx: CanvasRenderingContext2D, sprite: Sprite, x: number, y: number, scale = 1) {
   const width = sprite.width * scale;
@@ -93,6 +122,59 @@ export function capsuleSprite(color: string, length: number, thickness: number, 
   ctx.fill();
   cache.set(key, sprite);
   return sprite;
+}
+
+/**
+ * A baked beam band: one long capsule with a baked glow, drawn along its
+ * length. Canvas shadowBlur on a stroke thousands of pixels long costs more
+ * than an entire frame, so the rail's bands are pre-rendered like every other
+ * glow in the scene.
+ */
+export function beamSprite(color: string, length: number, thickness: number): Sprite {
+  const key = `beam:${color}:${length}:${thickness}`;
+  const cached = cache.get(key);
+  if (cached) return cached;
+
+  const pad = Math.ceil(thickness * 1.4) + 12;
+  const width = Math.ceil(length + pad * 2);
+  const height = Math.ceil(thickness + pad * 2);
+  const sprite = document.createElement('canvas');
+  sprite.width = width;
+  sprite.height = height;
+  const ctx = sprite.getContext('2d')!;
+  const mid = height / 2;
+  // A soft vertical falloff across the band, drawn as a stack of translucent
+  // capsules so the core stays bright and the edges fade out.
+  const bands = 12;
+  for (let index = bands; index >= 1; index--) {
+    const spread = thickness * (0.35 + index / bands * 0.95);
+    ctx.globalAlpha = 0.055 + 0.16 / index;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') ctx.roundRect(pad * 0.35, mid - spread / 2, length + pad * 1.3, spread, spread / 2);
+    else ctx.rect(pad * 0.35, mid - spread / 2, length + pad * 1.3, spread);
+    ctx.fill();
+  }
+  cache.set(key, sprite);
+  return sprite;
+}
+
+/**
+ * Draws a baked beam from (x1, y1) to (x2, y2). The sprite is built along +X
+ * and rotated once at blit time, which keeps a full-length lance to a single
+ * drawImage instead of a shadowed stroke.
+ */
+export function drawBeam(ctx: CanvasRenderingContext2D, sprite: Sprite, x1: number, y1: number, x2: number, y2: number, scale = 1) {
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+  const pad = sprite.height / 2;
+  ctx.save();
+  ctx.translate(x1, y1);
+  ctx.rotate(angle);
+  const height = sprite.height * scale;
+  // The baked padding hangs past both ends; keep the visible band centred on
+  // the requested segment.
+  ctx.drawImage(sprite, -pad * scale, -height / 2, sprite.width * scale, height);
+  ctx.restore();
 }
 
 /** Releases cached sprites so a new run does not inherit stale colours. */
