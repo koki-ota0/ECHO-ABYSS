@@ -71,6 +71,11 @@ const RAIL_LENGTH = 1750;
 const RAIL_NORMAL_DAMAGE = 30;
 const RAIL_EDGE_HP_FRACTION = 0.4;
 const RAIL_EDGE_DAMAGE_FLOOR = 4;
+// NOVA BURST. The nova is a panic button rather than a damage tool: it clears
+// bullets, shoves bodies away and only needs to be worth the 7 s cooldown, so
+// it sits just above the reach of a contact hit instead of matching the rail.
+const NOVA_RADIUS = 340;
+const NOVA_DAMAGE_MULTIPLIER = 4;
 // Ramming is the least readable damage source, so it is damped relative to
 // bullets. Without this a single late-stage tank touch removes a third of the
 // frame before a draft can answer it.
@@ -1575,13 +1580,13 @@ export class GameEngine {
       this.sound.play('arc', 1.25);
       this.flash = Math.max(this.flash, 0.22);
     } else {
-      const radius = 310;
+      const radius = NOVA_RADIUS;
       this.shockwaves.push({ x: p.x, y: p.y, life: 0.48, maxLife: 0.48, radius, color: BASTION_COLOR });
       for (const enemy of this.enemies) {
         if (enemy.dead) continue;
         const d = distance(p.x, p.y, enemy.x, enemy.y);
         if (d < radius + enemy.radius) {
-          this.damageEnemy(enemy, p.stats.damage * 3.4, 'player');
+          this.damageEnemy(enemy, p.stats.damage * NOVA_DAMAGE_MULTIPLIER, 'player');
           const nx = (enemy.x - p.x) / Math.max(1, d), ny = (enemy.y - p.y) / Math.max(1, d);
           const force = enemy.kind === 'boss' ? 85 : 390;
           enemy.vx += nx * force; enemy.vy += ny * force;
