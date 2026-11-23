@@ -28,6 +28,28 @@ const option = (name, fallback) => {
   return value ?? fallback;
 };
 
+/**
+ * True when the merge changed what the game looks like, false when it only
+ * touched footage and capture tooling, null when that cannot be determined.
+ *
+ * demos/ and scripts/demo/ are excluded because a "capture the last merge" PR
+ * only changes those, and re-shooting it would produce footage identical to
+ * the version it was taken from (which is how the capture loop would never
+ * terminate).
+ */
+const NON_GAMEPLAY = [/^demos\//, /^scripts\/demo\//];
+function mergeChangesGameplay(ref) {
+  try {
+    const parents = git(['rev-list', '--parents', '-n', '1', ref]).split(' ').slice(1);
+    if (!parents.length) return null;
+    const files = git(['diff', '--name-only', parents[0], ref]).split('\n').filter(Boolean);
+    if (!files.length) return null;
+    return files.some(file => !NON_GAMEPLAY.some(pattern => pattern.test(file)));
+  } catch {
+    return null;
+  }
+}
+
 function git(args) {
   return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
@@ -68,6 +90,16 @@ for (const dir of [path.join(DEMOS_DIR, tag), path.join(DEMOS_DIR, `${git(['show
     console.error('A version is captured once; pass --force to re-shoot it (the old files are replaced).');
     process.exit(1);
   }
+}
+
+// A merge that only adds footage (the usual "capture the last merge" PR) does
+// not change the game, so its clips would be a byte-for-byte repeat of the
+// previous version. Capture only when something outside demos/ moved.
+const changed = mergeChangesGameplay(sha);
+if (changed === false && !force) {
+  console.error(`${sha} only changes footage and capture tooling: its clips would repeat the previous version.`);
+  console.error('Nothing to capture. Pass --force to record it anyway.');
+  process.exit(0);
 }
 
 console.log(`capturing ${tag}${pr ? ` (PR #${pr})` : ''} at ${resolution}`);

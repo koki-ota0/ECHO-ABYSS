@@ -23,9 +23,16 @@ node scripts/demo/version.mjs --pr 8 --sha $(git rev-parse --short=7 HEAD) --lab
 `version.mjs` は次をまとめて行います。
 
 1. `HEAD` が指定 `--sha` と一致するか確認（別バージョンの映像が混ざるのを防ぐ）
-2. 全シーンを録画 → 720p / 30fps / H.264 に正規化（`scripts/demo/capture.mjs`）
-3. コンタクトシートと通しリールを生成（`scripts/demo/render.mjs`）
-4. `demos/index.json` にバージョン情報を追記
+2. そのマージがゲーム本体を変えたか確認。`demos/` と `scripts/demo/` しか触っていなければ**撮影せずに終了**する
+3. 全シーンを録画 → 720p / 30fps / H.264 に正規化（`scripts/demo/capture.mjs`）
+4. コンタクトシートと通しリールを生成（`scripts/demo/render.mjs`）
+5. `demos/index.json` にバージョン情報を追記
+
+### 撮影をスキップする条件
+
+**撮影PRをマージしただけのときは撮り直しません。** 映像はゲームのコードの写像なので、`demos/`（と撮影用の `scripts/demo/`）しか変わっていないマージを撮っても、前のバージョンと同一の絵ができあがるだけです。これを機械的に繰り返すと「撮影PRをマージ → その動画を撮るPRをマージ → …」が終わりません。
+
+そのため判定は「`src/` や `index.html`、`package.json` などゲームの見た目・挙動に効くファイルが変わったか」で行います。撮り直したい場合は `--force` を付けます。
 
 最後に素材をコミットします。
 
