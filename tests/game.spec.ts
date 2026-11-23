@@ -604,6 +604,48 @@ test('BASTION homing bends nova shots and WRAITH pierce adds dependable damage',
   expect(focusedArcDamage).toBeCloseTo(94, 5);
 });
 
+test('BASTION nova burst reaches further and hits harder than its pre-buff values', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const engine = (window as any).__ECHO__;
+    await engine.start('bastion', 'standard', 'NOVA-RANGE', 'infinite', 1);
+    engine.enemies = []; engine.projectiles = [] as any[];
+    engine.player.stats.critChance = 0;
+    const p = engine.player;
+    const damage = p.stats.damage;
+
+    // A body just inside the new radius and one clearly outside it. The pair
+    // brackets the boundary, so the test fails if the radius shrinks back.
+    engine.spawnEnemy('tank', p.x + 335, p.y, false);
+    const inside = engine.enemies.at(-1);
+    engine.spawnEnemy('tank', p.x + 420, p.y, false);
+    const outside = engine.enemies.at(-1);
+    // An enemy bullet on the edge must still be cleared.
+    engine.projectiles.push({ id: 1, x: p.x + 300, y: p.y, vx: 0, vy: 0, life: 1, friendly: false, source: 'enemy', damage: 1, radius: 4, kind: 'enemy', hit: new Set(), angle: 0 });
+
+    const insideBefore = inside.hp;
+    const outsideBefore = outside.hp;
+    p.weaponCooldown = 0;
+    engine.triggerWeaponSkill();
+    engine.updateProjectiles(1 / 60);
+    return {
+      damage,
+      insideDamage: insideBefore - inside.hp,
+      outsideDamage: outsideBefore - outside.hp,
+      bulletCleared: engine.projectiles.every((projectile: any) => projectile.life <= 0),
+      shockwaveRadius: engine.shockwaves.at(-1).radius,
+      cooldown: p.weaponCooldown,
+    };
+  });
+
+  // Damage is a clean 4x weapon damage (was 3.4x).
+  expect(result.insideDamage).toBeCloseTo(result.damage * 4, 4);
+  // The radius reaches 340 (was 310), so 335 is hit and 420 is not.
+  expect(result.outsideDamage).toBe(0);
+  expect(result.shockwaveRadius).toBe(340);
+  expect(result.bulletCleared).toBe(true);
+  expect(result.cooldown).toBeGreaterThan(0);
+});
+
 test('echo volleys preserve their formation but rotate toward live enemies', async ({ page }) => {
   for (const core of ['wraith', 'bastion']) {
     const result = await page.evaluate(async ({ core }) => {

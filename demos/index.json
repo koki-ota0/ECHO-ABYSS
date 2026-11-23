@@ -1,0 +1,105 @@
+{
+  "versions": [
+    {
+      "tag": "2026-11-24-2ffeaec",
+      "date": "2026-11-24",
+      "sha": "2ffeaec",
+      "mergeCommit": "2ffeaeca0f7f8581b26b089e7df15c5cdb438a29",
+      "pr": 7,
+      "label": "難易度再調整・弾/XPの見た目復元・WRAITHレールの二段判定",
+      "resolution": "720p",
+      "capturedAt": "2026-11-23T18:14:09.748Z",
+      "clips": 14,
+      "seconds": 109,
+      "reel": "demos/2026-11-24-2ffeaec/720p/reel.mp4",
+      "reelBytes": 8245775,
+      "contactSheet": "demos/2026-11-24-2ffeaec/720p/contact-sheet.jpg",
+      "scenes": [
+        {
+          "id": "01-menu",
+          "file": "01-menu.mp4",
+          "note": "タイトル → モード選択 → 初期ボーナス画面",
+          "seconds": 7
+        },
+        {
+          "id": "02-combat",
+          "file": "02-combat.mp4",
+          "note": "基本戦闘（残響・手動照準・ダッシュ）",
+          "seconds": 9
+        },
+        {
+          "id": "03-rail",
+          "file": "03-rail.mp4",
+          "note": "貫通レール：中心撃破・周辺大ダメージ",
+          "seconds": 8
+        },
+        {
+          "id": "04-boss",
+          "file": "04-boss.mp4",
+          "note": "ボス戦（KAIROS）",
+          "seconds": 10
+        },
+        {
+          "id": "05-draft",
+          "file": "05-draft.mp4",
+          "note": "レベルアップ抽選→選択",
+          "seconds": 8
+        },
+        {
+          "id": "06-punch-echo",
+          "file": "06-punch-echo.mp4",
+          "note": "残響召喚の寄り",
+          "seconds": 6
+        },
+        {
+          "id": "07-overdrive",
+          "file": "07-overdrive.mp4",
+          "note": "ZERO FIELD（オーバードライブ）",
+          "seconds": 6
+        },
+        {
+          "id": "08-bastion",
+          "file": "08-bastion.mp4",
+          "note": "BASTION 全方位射撃",
+          "seconds": 7
+        },
+        {
+          "id": "09-letterbox",
+          "file": "09-letterbox.mp4",
+          "note": "シネマティック比率（HUDなし）",
+          "seconds": 9
+        },
+        {
+          "id": "10-vertical",
+          "file": "10-vertical.mp4",
+          "note": "縦型（SNS リール / Shorts 用）",
+          "seconds": 8
+        },
+        {
+          "id": "11-boss-chorus",
+          "file": "11-boss-chorus.mp4",
+          "note": "NEXUS 弾幕の寄り",
+          "seconds": 8
+        },
+        {
+          "id": "12-final",
+          "file": "12-final.mp4",
+          "note": "AION 最終ボス（シネマティック）",
+          "seconds": 10
+        },
+        {
+          "id": "13-tank",
+          "file": "13-tank.mp4",
+          "note": "装甲タンクの破壊（寄り）",
+          "seconds": 6
+        },
+        {
+          "id": "14-cards",
+          "file": "14-cards.mp4",
+          "note": "カード選択アップ（別アングル）",
+          "seconds": 7
+        }
+      ]
+    }
+  ]
+}
