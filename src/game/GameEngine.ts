@@ -2,6 +2,7 @@ import { SoundSystem } from './audio';
 import { BASTION_COLOR, CORES, ECHO_COLOR } from './types';
 import { UPGRADES, UPGRADE_BY_ID } from './upgrades';
 import { BOSS_DEFINITIONS, bossKindForEncounter } from './bosses';
+import { buildBackgroundSprite, drawGlow, glowSprite } from './sprites';
 import type { BossKind } from './bosses';
 import { LEVELS, LEVEL_STARTING_MODIFIER, formatStage } from './levels';
 import type { LevelDefinition } from './levels';
@@ -252,6 +253,9 @@ export class GameEngine {
   // Last rail lane plus the timestamp it was chosen, so the cannon keeps its
   // heading briefly instead of snapping between crowded directions.
   private railAim: { angle: number; at: number } | null = null;
+  // The nebula tint is static, so it is baked into an offscreen canvas and
+  // blitted instead of re-rasterising a large radial gradient every frame.
+  private backgroundSprite: HTMLCanvasElement | null = null;
   private shotCounter = 0;
   private dashHit = new Set<number>();
   private shake = 0;
@@ -2007,6 +2011,7 @@ export class GameEngine {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = '#030509';
     ctx.fillRect(0, 0, width, height);
+    if (!this.backgroundSprite) this.backgroundSprite = buildBackgroundSprite(W, H);
     ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * x, dpr * y);
     ctx.save();
     if (this.shake > 0 && this.status === 'running') ctx.translate((Math.random() - 0.5) * this.shake, (Math.random() - 0.5) * this.shake);
@@ -2034,12 +2039,17 @@ export class GameEngine {
   }
 
   private drawBackground(ctx: CanvasRenderingContext2D, time: number) {
-    const gradient = ctx.createRadialGradient(W * 0.5, H * 0.45, 30, W * 0.5, H * 0.45, 850);
-    gradient.addColorStop(0, this.player?.overdrive > 0 ? '#102b31' : '#0b1620');
-    gradient.addColorStop(0.55, '#070c14');
-    gradient.addColorStop(1, '#030509');
-    ctx.fillStyle = gradient;
-    ctx.fillRect(0, 0, W, H);
+    // Building a radial gradient every frame is pure allocation overhead; both
+    // variants are static, so they are created once and reused.
+    const sprite = this.backgroundSprite;
+    if (sprite) ctx.drawImage(sprite, 0, 0);
+    else { ctx.fillStyle = '#070c14'; ctx.fillRect(0, 0, W, H); }
+    // Overdrive is a cheap tint over the baked backdrop rather than a second
+    // full-screen gradient build.
+    if ((this.player?.overdrive ?? 0) > 0) {
+      ctx.fillStyle = 'rgba(16,43,49,.55)';
+      ctx.fillRect(0, 0, W, H);
+    }
 
     ctx.strokeStyle = 'rgba(92, 211, 207, 0.045)';
     ctx.lineWidth = 1;
@@ -2135,7 +2145,8 @@ export class GameEngine {
       const color = pickup.kind === 'health' ? '#7dffb2' : pickup.value >= 20 ? '#ffcf70' : '#62f6e7';
       const pulse = 1 + Math.sin(time * 5 + pickup.x) * 0.12;
       ctx.save(); ctx.translate(pickup.x, pickup.y); ctx.rotate(time * 1.4 + pickup.age);
-      ctx.fillStyle = color; ctx.shadowColor = color; ctx.shadowBlur = 13;
+      ctx.fillStyle = color;
+      drawGlow(ctx, glowSprite(color, 15), 0, 0, pulse);
       const size = (pickup.kind === 'health' ? 8 : pickup.value >= 20 ? 8 : 5) * pulse;
       if (pickup.kind === 'health') {
         ctx.fillRect(-3, -10, 6, 20); ctx.fillRect(-10, -3, 20, 6);
@@ -2182,20 +2193,30 @@ export class GameEngine {
   }
 
   private drawProjectiles(ctx: CanvasRenderingContext2D) {
+    // Shadowless glow sprites keep this on the fast canvas path. Drawing
+    // shadowBlur per bullet while in 'lighter' mode cost seconds per frame.
     ctx.save(); ctx.globalCompositeOperation = 'lighter';
     for (const projectile of this.projectiles) {
       if (projectile.life <= 0) continue;
-      ctx.save(); ctx.translate(projectile.x, projectile.y);
-      ctx.fillStyle = projectile.color; ctx.shadowColor = projectile.color; ctx.shadowBlur = projectile.friendly ? 14 : 20;
       if (projectile.friendly) {
+        // A rotated blit costs about 4x a plain one, so only the bloom is a
+        // sprite here; the dart itself stays a cheap rotated fillRect.
+        drawGlow(ctx, glowSprite(projectile.color, projectile.radius * 2.6), projectile.x, projectile.y, 0.85);
+        ctx.save();
+        ctx.translate(projectile.x, projectile.y);
         ctx.rotate(Math.atan2(projectile.vy, projectile.vx));
+        ctx.fillStyle = projectile.color;
         ctx.fillRect(-projectile.radius * 2.8, -projectile.radius * 0.55, projectile.radius * 4.5, projectile.radius * 1.1);
+        ctx.restore();
       } else {
-        ctx.beginPath(); ctx.arc(0, 0, projectile.radius, 0, TAU); ctx.fill();
+        // Hostile bullets stay crisp and readable: a small bright core plus a
+        // baked halo, with the diagnostic ring kept as a cheap stroke.
+        drawGlow(ctx, glowSprite(projectile.color, projectile.radius * 2.2), projectile.x, projectile.y, 1);
+        ctx.fillStyle = projectile.color;
+        ctx.beginPath(); ctx.arc(projectile.x, projectile.y, projectile.radius, 0, TAU); ctx.fill();
         ctx.strokeStyle = 'rgba(255,180,190,.7)'; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.arc(0, 0, projectile.radius + 4, 0, TAU); ctx.stroke();
+        ctx.beginPath(); ctx.arc(projectile.x, projectile.y, projectile.radius + 4, 0, TAU); ctx.stroke();
       }
-      ctx.restore();
     }
     ctx.restore();
   }
@@ -2241,8 +2262,17 @@ export class GameEngine {
       ctx.save(); ctx.translate(enemy.x, enemy.y); ctx.rotate(enemy.angle);
       const color = enemy.flash > 0 ? '#ffffff' : enemy.kind === 'boss' ? BOSS_DEFINITIONS[enemy.bossKind ?? 'warden'].color : enemy.elite ? '#ffcf70' : ENEMY_COLORS[enemy.kind];
       ctx.strokeStyle = color; ctx.fillStyle = enemy.kind === 'boss' ? BOSS_DEFINITIONS[enemy.bossKind ?? 'warden'].fill : 'rgba(32,13,24,.9)';
-      ctx.lineWidth = enemy.elite ? 2.5 : 1.6; ctx.shadowColor = color; ctx.shadowBlur = enemy.flash > 0 ? 24 : 8;
       const r = enemy.radius;
+      // The outline stays crisp; the glow is a baked sprite behind it. Using
+      // shadowBlur per enemy was the second largest cost after the bullets.
+      // Keep the halo close to the silhouette: the previous shadowBlur=8 read
+      // as a tight rim light, not a large cloud.
+      const glowRadius = enemy.kind === 'boss' ? r * 1.05 : r * 0.62;
+      const glowAlpha = enemy.flash > 0 ? 0.95 : enemy.kind === 'boss' ? 0.55 : 0.34;
+      ctx.globalAlpha = glowAlpha;
+      drawGlow(ctx, glowSprite(color, glowRadius), 0, 0, 1);
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = enemy.elite ? 2.5 : 1.6;
       if (enemy.kind === 'drone' || enemy.kind === 'dart' || enemy.kind === 'mite') {
         ctx.beginPath(); ctx.moveTo(r, 0); ctx.lineTo(-r * 0.75, r * 0.72); ctx.lineTo(-r * 0.35, 0); ctx.lineTo(-r * 0.75, -r * 0.72); ctx.closePath(); ctx.fill(); ctx.stroke();
         ctx.fillStyle = color; ctx.fillRect(r * 0.05, -2, r * 0.65, 4);

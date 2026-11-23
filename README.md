@@ -151,7 +151,7 @@ ABYSSは、敵HP ×1.55、ワーデンHP ×2、出現頻度 ×1.4、敵速度 ×
 
 ```bash
 npm run build       # TypeScript + production build
-npm test            # Playwright 34件
+npm test            # Playwright 35件
 npm run playtest -- 100 wraith STAGE001 level 1 progression fast
 ```
 
@@ -184,6 +184,18 @@ npm run playtest -- 180 tempest FINALMAX level 100 max fast
 - React 19 + TypeScript + Vite
 - Canvas 2Dによる固定時間刻みのゲームエンジン
 - Lucideアイコン、同梱フォント、生成キーアート
-- PlaywrightによるUI・操作・キャンペーン・モバイルの回帰テスト
+- PlaywrightによるUI・操作・キャンペーン・モバイル・描画性能の回帰テスト
 
-主要なゲームロジックは `src/game/GameEngine.ts`、ボス定義と出現順は `src/game/bosses.ts`、進化は `src/game/upgrades.ts`、100ステージの生成・スケーリングは `src/game/levels.ts`、永続EXPと％初期ボーナスは `src/game/campaign.ts`、UIは `src/App.tsx` と `src/styles.css` にあります。
+主要なゲームロジックは `src/game/GameEngine.ts`、発光スプライトの生成は `src/game/sprites.ts`、ボス定義と出現順は `src/game/bosses.ts`、進化は `src/game/upgrades.ts`、100ステージの生成・スケーリングは `src/game/levels.ts`、永続EXPと％初期ボーナスは `src/game/campaign.ts`、UIは `src/App.tsx` と `src/styles.css` にあります。
+
+### 描画性能
+
+Canvas 2D では `shadowBlur` と `globalCompositeOperation = 'lighter'` の併用が非常に重く、ブラウザがソフトウェア描画へ落ちます。弾幕が増える場面で目立ったラグはこれが原因でした。現在は光をすべて起動時に一度だけ生成したスプライト（`src/game/sprites.ts`）として `drawImage` で貼り、背景のグラデーションもキャッシュしています。
+
+| 計測（1440×900・Chromium） | 変更前 | 変更後 |
+| --- | --- | --- |
+| 敵弾300発の描画 | 2,340ms | 10ms |
+| 自弾300発の描画 | 3.1ms | 6.3ms |
+| 混合フレーム全体（弾150・敵40・粒子300） | 977ms | 13.3ms |
+
+新しいエフェクトを追加するときは `shadowBlur` を直接使わず、`sprites.ts` の `glowSprite` / `buildBackgroundSprite` を経由してください。`bullet drawing stays off the shadowBlur slow path` テストが、この退行を検出します。

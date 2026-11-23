@@ -337,18 +337,24 @@ test('action dock runs Q, E, R left to right and each key fires its own ability'
 
   const pilot = () => page.evaluate(() => {
     const engine = (window as any).__ECHO__;
-    return { overdrive: engine.player.overdrive as number, sync: engine.player.sync as number };
+    return {
+      overdrive: engine.player.overdrive as number,
+      sync: engine.player.sync as number,
+      // Echoes only live for the recorded history window plus a moment, so a
+      // short one can expire before a poll sees it. The counter is monotonic.
+      echoesCreated: engine.echoesCreated as number,
+    };
   });
 
   // Q = weapon skill only
   await page.keyboard.press('q');
   await expect.poll(async () => (await snapshot(page)).weaponCooldown).toBeGreaterThan(0);
-  await expect.poll(async () => (await snapshot(page)).echoes).toBe(0);
+  await expect.poll(async () => (await pilot()).echoesCreated).toBe(0);
   expect((await pilot()).overdrive).toBe(0);
 
   // E = echo summon only
   await page.keyboard.press('e');
-  await expect.poll(async () => (await snapshot(page)).echoes).toBeGreaterThan(0);
+  await expect.poll(async () => (await pilot()).echoesCreated).toBe(1);
   expect((await pilot()).overdrive).toBe(0);
 
   // R = ZERO FIELD
@@ -1234,6 +1240,49 @@ test('WRAITH rail aims at the densest hostile cluster and erases normal enemies 
   expect(result.stragglerCleared).toBe(false);
   expect(result.aimedUpRight).toBe(true);
   expect(result.aimedDownLeft).toBe(true);
+});
+
+test('bullet drawing stays off the shadowBlur slow path so dense waves keep frame time', async ({ page }) => {
+  const result = await page.evaluate(async () => {
+    const engine = (window as any).__ECHO__;
+    await engine.start('wraith', 'standard', 'SPRITE-BUDGET', 'level', 90);
+    engine.tutorialEnabled = false; engine.spawnTimer = 999;
+    const ctx = engine.ctx; const view = engine.view;
+    const fill = (count: number, friendly: boolean) => {
+      engine.projectiles = [];
+      for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        engine.projectiles.push({
+          x: engine.player.x + Math.cos(angle) * 200, y: engine.player.y + Math.sin(angle) * 200,
+          vx: Math.cos(angle) * 300, vy: Math.sin(angle) * 300, life: 999, maxLife: 999,
+          damage: 1, friendly, radius: 4, color: friendly ? '#62f6e7' : '#ff6078',
+          kind: 'bullet', pierce: 0, hit: new Set(), angle,
+        });
+      }
+    };
+    const measure = () => {
+      const started = performance.now();
+      for (let frame = 0; frame < 5; frame++) {
+        ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+        ctx.save(); engine.drawProjectiles(ctx); ctx.restore();
+      }
+      ctx.getImageData(0, 0, 1, 1);
+      return (performance.now() - started) / 5;
+    };
+
+    fill(300, false);
+    const hostile = measure();
+    fill(300, true);
+    const friendly = measure();
+
+    // Painting 300 bullets must never reach the old shadowBlur cost, which was
+    // measured in whole seconds. 120ms still leaves the 16.7ms frame budget an
+    // order of magnitude of headroom on slower machines and CI.
+    const budget = 120;
+    return { hostile, friendly, budget };
+  });
+  expect(result.hostile).toBeLessThan(result.budget);
+  expect(result.friendly).toBeLessThan(result.budget);
 });
 
 test('normal enemies gain extra durability after round 30 without changing boss or attack scaling', async ({ page }) => {
