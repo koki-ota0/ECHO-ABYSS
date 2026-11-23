@@ -30,21 +30,23 @@ const option = (name, fallback) => {
 
 /**
  * True when the merge changed what the game looks like, false when it only
- * touched footage and capture tooling, null when that cannot be determined.
+ * touched footage, docs or capture tooling, null when that cannot be determined.
  *
- * demos/ and scripts/demo/ are excluded because a "capture the last merge" PR
- * only changes those, and re-shooting it would produce footage identical to
- * the version it was taken from (which is how the capture loop would never
- * terminate).
+ * This is an allowlist of the paths that actually feed the rendered game.
+ * A deny-list of demos/ is not enough: a "capture the last merge" PR also
+ * updates READMEs and the capture scripts, and those changes never alter a
+ * single pixel of gameplay. Treating them as gameplay would shoot footage
+ * identical to the previous version, and merging that capture would queue
+ * another identical one forever.
  */
-const NON_GAMEPLAY = [/^demos\//, /^scripts\/demo\//];
+const GAMEPLAY_PATHS = [/^src\//, /^public\//, /^index\.html$/, /^vite\.config\.ts$/, /^package(-lock)?\.json$/];
 function mergeChangesGameplay(ref) {
   try {
     const parents = git(['rev-list', '--parents', '-n', '1', ref]).split(' ').slice(1);
     if (!parents.length) return null;
     const files = git(['diff', '--name-only', parents[0], ref]).split('\n').filter(Boolean);
     if (!files.length) return null;
-    return files.some(file => !NON_GAMEPLAY.some(pattern => pattern.test(file)));
+    return files.some(file => GAMEPLAY_PATHS.some(pattern => pattern.test(file)));
   } catch {
     return null;
   }
@@ -97,7 +99,7 @@ for (const dir of [path.join(DEMOS_DIR, tag), path.join(DEMOS_DIR, `${git(['show
 // previous version. Capture only when something outside demos/ moved.
 const changed = mergeChangesGameplay(sha);
 if (changed === false && !force) {
-  console.error(`${sha} only changes footage and capture tooling: its clips would repeat the previous version.`);
+  console.error(`${sha} changes nothing under src/, public/ or the build config: its clips would repeat the previous version.`);
   console.error('Nothing to capture. Pass --force to record it anyway.');
   process.exit(0);
 }
