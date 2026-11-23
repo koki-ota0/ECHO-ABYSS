@@ -1259,7 +1259,7 @@ test('WRAITH rail keeps its impact and adds three sustained damage ticks over on
   expect(result.lifeAfter).toBeLessThanOrEqual(0);
 });
 
-test('WRAITH rail aims at the densest hostile cluster and erases normal enemies in one cast', async ({ page }) => {
+test('WRAITH rail kills on its centre line and only wounds at the edge', async ({ page }) => {
   const result = await page.evaluate(async () => {
     const engine = (window as any).__ECHO__;
     const setup = async (seed: string) => {
@@ -1278,10 +1278,11 @@ test('WRAITH rail aims at the densest hostile cluster and erases normal enemies 
       engine.spawnTimer = 999;
       engine.bossSpawned = true;
     };
-    const place = (kind: string, x: number, y: number) => {
-      engine.spawnEnemy(kind, x, y, false);
+    const place = (kind: string, x: number, y: number, elite = false) => {
+      engine.spawnEnemy(kind, x, y, elite);
       const enemy = engine.enemies[engine.enemies.length - 1];
-      enemy.elite = false; enemy.hp = enemy.maxHp;
+      enemy.elite = elite;
+      enemy.hp = enemy.maxHp;
       return enemy;
     };
 
@@ -1300,9 +1301,11 @@ test('WRAITH rail aims at the densest hostile cluster and erases normal enemies 
     const beam = engine.beams.find((candidate: any) => candidate.kind === 'rail');
     const at = beam.points[1];
     const aimedLeft = at.x < px;
-    const crowdCleared = left.every(enemy => enemy.dead);
+    // The crowd sits mostly on the centre line: nearly all of it is erased,
+    // and anything outside the core is left badly wounded rather than intact.
     const stragglerCleared = right.dead;
     const crowdDead = left.filter(enemy => enemy.dead).length;
+    const crowdWounded = left.filter(enemy => !enemy.dead && enemy.hp < enemy.maxHp * 0.7).length;
 
     // Pointing the pointer at an empty corner must not drag the lane off the
     // crowd either.
@@ -1321,14 +1324,59 @@ test('WRAITH rail aims at the densest hostile cluster and erases normal enemies 
     const noPointerBeam = engine.beams.find((candidate: any) => candidate.kind === 'rail');
     const aimedDownLeft = noPointerBeam.points[1].y > py && noPointerBeam.points[1].x < px;
 
-    return { aimedLeft, crowdCleared, stragglerCleared, crowdDead, aimedUpRight, aimedDownLeft };
+    // Offset sweep down a pinned lane: centre is lethal, the fringe wounds.
+    await setup('RAIL-OFFSETS');
+    const offsets = [];
+    for (const offset of [0, 20, 44, 46, 70, 118]) {
+      engine.enemies = []; engine.beams = []; engine.projectiles = [];
+      engine.player.weaponCooldown = 0; engine.railAim = { angle: 0, at: engine.elapsed };
+      const enemy = place('drone', px + 300, py + offset);
+      const hpBefore = enemy.hp;
+      engine.useWeaponSkill();
+      offsets.push({ offset, dead: enemy.dead, lostRatio: (hpBefore - enemy.hp) / hpBefore });
+    }
+
+    // A tanky elite on the fringe must survive the same cast.
+    engine.enemies = []; engine.beams = [];
+    engine.player.weaponCooldown = 0; engine.railAim = { angle: 0, at: engine.elapsed };
+    const elite = place('tank', px + 300, py + 70, true);
+    elite.radius = 36;
+    const eliteHpBefore = elite.hp;
+    engine.useWeaponSkill();
+    const eliteFringe = { dead: elite.dead, lostRatio: (eliteHpBefore - elite.hp) / eliteHpBefore };
+
+    return {
+      aimedLeft, crowdDead, crowdWounded, crowdSize: left.length, stragglerCleared,
+      aimedUpRight, aimedDownLeft, offsets, eliteFringe,
+      halfWidth: beam.halfWidth, coreHalfWidth: beam.coreHalfWidth,
+    };
   });
   expect(result.aimedLeft).toBe(true);
-  expect(result.crowdDead).toBe(5);
-  expect(result.crowdCleared).toBe(true);
+  // Most of the crowd is erased; the rest is wounded, never untouched.
+  expect(result.crowdDead).toBeGreaterThanOrEqual(result.crowdSize - 2);
+  expect(result.crowdDead + result.crowdWounded).toBe(result.crowdSize);
   expect(result.stragglerCleared).toBe(false);
   expect(result.aimedUpRight).toBe(true);
   expect(result.aimedDownLeft).toBe(true);
+
+  // The cast is narrower than the old 150px sweep, but still covers a crowd.
+  expect(result.halfWidth).toBeLessThan(150);
+  expect(result.coreHalfWidth).toBeGreaterThan(0);
+  expect(result.coreHalfWidth).toBeLessThan(result.halfWidth);
+
+  for (const sample of result.offsets) {
+    if (sample.offset < result.coreHalfWidth) {
+      // Centre line: erased outright, however tough the target is.
+      expect(sample.dead, `offset ${sample.offset} must be erased`).toBe(true);
+    } else {
+      // Fringe: heavy damage, never a free kill.
+      expect(sample.dead, `offset ${sample.offset} must survive the fringe`).toBe(false);
+      expect(sample.lostRatio).toBeGreaterThan(0.3);
+      expect(sample.lostRatio).toBeLessThan(1);
+    }
+  }
+  expect(result.eliteFringe.dead).toBe(false);
+  expect(result.eliteFringe.lostRatio).toBeGreaterThan(0.3);
 });
 
 test('bullet drawing stays off the shadowBlur slow path so dense waves keep frame time', async ({ page }) => {
