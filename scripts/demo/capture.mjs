@@ -20,6 +20,8 @@ const option = (name, fallback) => {
 
 const version = option('version', 'unversioned');
 const resolution = option('resolution', '720p');
+const commit = option('commit', null);
+const pullRequest = option('pr', null);
 const only = option('only', null);
 const ffmpeg = await resolveFfmpeg();
 
@@ -47,8 +49,16 @@ const rawDir = path.join(DEMOS_DIR, '.raw');
 ensureDirs(target, rawDir, path.join(DEMOS_DIR, '.raw', 'clips'));
 
 const manifestPath = path.join(target, 'clips.json');
-let manifest = { version, resolution, capturedAt: null, clips: [] };
-try { manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8')); } catch {}
+// The commit and PR are what tie a clip back to the release it shows, so they
+// are recorded in the manifest itself, not only in demos/index.json.
+let manifest = {
+  version, resolution, capturedAt: null,
+  commit: resolveCommit(commit), pullRequest: pullRequest ? Number(pullRequest) : null,
+  clips: [],
+};
+try { manifest = { ...manifest, ...JSON.parse(await fs.readFile(manifestPath, 'utf8')) }; } catch {}
+manifest.commit ??= resolveCommit(commit);
+manifest.pullRequest ??= pullRequest ? Number(pullRequest) : null;
 
 const scenes = SCENES.filter(scene => !only || scene.id === only);
 const browser = await launchBrowser();
@@ -107,6 +117,8 @@ for (const scene of scenes) {
   });
   manifest.clips.sort((a, b) => a.id.localeCompare(b.id));
   manifest.capturedAt = new Date().toISOString();
+  manifest.commit = resolveCommit(commit) ?? manifest.commit;
+  manifest.pullRequest = pullRequest ? Number(pullRequest) : manifest.pullRequest;
   await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
   console.log(`ok (${result.errors.length ? result.errors.slice(0, 2).join(' | ') : 'no errors'})`);
 }
@@ -116,6 +128,15 @@ console.log(`\n${scenes.length} scene(s) → ${path.relative(process.cwd(), targ
 if (!ffmpeg) console.log('ffmpeg not found: raw .webm files were kept instead of mp4. Run scripts/demo/fetch-ffmpeg.mjs.');
 
 // ---------------------------------------------------------------- helpers ---
+
+/** Full hash for whatever ref the capture is attributed to (usually HEAD). */
+function resolveCommit(ref) {
+  try {
+    return execFileSync('git', ['rev-parse', ref ?? 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Frames the take for its delivery format.

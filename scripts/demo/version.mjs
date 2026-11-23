@@ -71,7 +71,10 @@ for (const dir of [path.join(DEMOS_DIR, tag), path.join(DEMOS_DIR, `${git(['show
 }
 
 console.log(`capturing ${tag}${pr ? ` (PR #${pr})` : ''} at ${resolution}`);
-execFileSync('node', ['scripts/demo/capture.mjs', '--version', tag, '--resolution', resolution], { cwd: ROOT, stdio: 'inherit' });
+// Pass the commit and PR through so the manifest records them per clip set.
+const captureArgs = ['scripts/demo/capture.mjs', '--version', tag, '--resolution', resolution, '--commit', sha];
+if (pr) captureArgs.push('--pr', String(pr));
+execFileSync('node', captureArgs, { cwd: ROOT, stdio: 'inherit' });
 execFileSync('node', ['scripts/demo/render.mjs', '--version', tag, '--resolution', resolution], { cwd: ROOT, stdio: 'inherit' });
 
 // Update the index that readers and the README link to.
