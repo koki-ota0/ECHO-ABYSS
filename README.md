@@ -217,6 +217,42 @@ node scripts/probe.mjs '[{"mode":"infinite","difficulty":"standard","policies":[
 - レベル050 / WRAITH / 購入38ランク：52.1秒、44撃破、残HP232でクリア。1,170XPが加算され、利用可能EXP 1,347 → 2,517。
 - レベル100 / WRAITH / 購入68ランク：57.0秒、49撃破、残HP460でクリア。3,120XPが加算され、利用可能EXP 640 → 3,760。全カンストには届かず、次の高コスト強化には周回が必要です。
 
+## デモ動画
+
+SNS 発信と後からの編集のために、**マージされたバージョンごとのプレイ映像**を `demos/` に残しています。完成プロモ 1 本ではなく、アングル・尺・密度を変えた 14 シーンの素材です。
+
+| 素材 | 中身 |
+| --- | --- |
+| `demos/<date>-<short-sha>/720p/NN-name.mp4` | シーン別クリップ（14本・合計約2分） |
+| `demos/<date>-<short-sha>/720p/NN-name.jpg` | 同シーンのスチル |
+| `demos/<date>-<short-sha>/720p/reel.mp4` | 全シーンを通しで並べたリール |
+| `demos/<date>-<short-sha>/720p/contact-sheet.jpg` | 全シーンのコンタクトシート（絵コンテ代わり） |
+| `demos/index.json` | バージョン一覧（日付・マージコミット・PR・尺） |
+
+### PR をマージするたびに保存する
+
+**ルール: `main` に PR をマージしたら、そのマージコミットのコードでデモを撮り、`demos/` に追加してコミットする。**
+
+```bash
+git switch main && git pull
+npm run dev &                                             # :5173（撮影は dev サーバー必須）
+
+node scripts/demo/version.mjs --pr 8 \
+  --sha $(git rev-parse --short=7 HEAD) \
+  --label "変更点をひとことで"
+```
+
+`version.mjs` が録画 → 720p 正規化 → コンタクトシート / リール生成 → `demos/index.json` 更新までを行います。あとは `demos/` と `index.json` をコミットするだけです。
+
+```bash
+git add demos/index.json demos/2026-11-24-2ffeaec
+git commit -m "Capture demo footage for 2026-11-24-2ffeaec"
+```
+
+ディレクトリ名はマージコミットから決まるため、映像とリリース済みコードが必ず 1 対 1 で対応します。撮影の詳細・シーン一覧・容量の方針は [`demos/README.md`](demos/README.md) にまとめています。
+
+撮影は実ブラウザ（Playwright）で、`window.__ECHO__` のループを止めて **1/60 秒固定ステップ**で進めます。シード固定なので同じシーンは毎回同じ展開になり、実時間に合わせて進めるのでクリップの尺と速度も実際のプレイと同じです。
+
 ## 技術構成
 
 - React 19 + TypeScript + Vite

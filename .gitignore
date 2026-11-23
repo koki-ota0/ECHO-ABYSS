@@ -5,3 +5,8 @@ test-results/
 *.local
 *.tsbuildinfo
 .DS_Store
+
+# Demo capture scratch space (see demos/README.md). Raw Playwright recordings
+# are large and worthless once normalised; the mp4s next to them are committed.
+demos/.raw/
+scripts/demo/node_modules/

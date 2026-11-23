@@ -1,0 +1,135 @@
+{
+  "version": "2026-11-24-2ffeaec",
+  "resolution": "720p",
+  "capturedAt": "2026-11-23T18:24:50.005Z",
+  "clips": [
+    {
+      "id": "01-menu",
+      "file": "01-menu.mp4",
+      "poster": "01-menu.jpg",
+      "note": "タイトル → モード選択 → 初期ボーナス画面",
+      "seconds": 7,
+      "camera": "full",
+      "vertical": false
+    },
+    {
+      "id": "02-combat",
+      "file": "02-combat.mp4",
+      "poster": "02-combat.jpg",
+      "note": "基本戦闘（残響・手動照準・ダッシュ）",
+      "seconds": 9,
+      "camera": "full",
+      "vertical": false
+    },
+    {
+      "id": "03-rail",
+      "file": "03-rail.mp4",
+      "poster": "03-rail.jpg",
+      "note": "貫通レール：中心撃破・周辺大ダメージ",
+      "seconds": 8,
+      "camera": "full",
+      "vertical": false
+    },
+    {
+      "id": "04-boss",
+      "file": "04-boss.mp4",
+      "poster": "04-boss.jpg",
+      "note": "ボス戦（KAIROS）",
+      "seconds": 10,
+      "camera": "push",
+      "vertical": false
+    },
+    {
+      "id": "05-draft",
+      "file": "05-draft.mp4",
+      "poster": "05-draft.jpg",
+      "note": "レベルアップ抽選→選択",
+      "seconds": 8,
+      "camera": "full",
+      "vertical": false
+    },
+    {
+      "id": "06-punch-echo",
+      "file": "06-punch-echo.mp4",
+      "poster": "06-punch-echo.jpg",
+      "note": "残響召喚の寄り",
+      "seconds": 6,
+      "camera": "punch",
+      "vertical": false
+    },
+    {
+      "id": "07-overdrive",
+      "file": "07-overdrive.mp4",
+      "poster": "07-overdrive.jpg",
+      "note": "ZERO FIELD（オーバードライブ）",
+      "seconds": 6,
+      "camera": "push",
+      "vertical": false
+    },
+    {
+      "id": "08-bastion",
+      "file": "08-bastion.mp4",
+      "poster": "08-bastion.jpg",
+      "note": "BASTION 全方位射撃",
+      "seconds": 7,
+      "camera": "push",
+      "vertical": false
+    },
+    {
+      "id": "09-letterbox",
+      "file": "09-letterbox.mp4",
+      "poster": "09-letterbox.jpg",
+      "note": "シネマティック比率（HUDなし）",
+      "seconds": 9,
+      "camera": "letter",
+      "vertical": false
+    },
+    {
+      "id": "10-vertical",
+      "file": "10-vertical.mp4",
+      "poster": "10-vertical.jpg",
+      "note": "縦型（SNS リール / Shorts 用）",
+      "seconds": 8,
+      "camera": "vertical",
+      "vertical": true
+    },
+    {
+      "id": "11-boss-chorus",
+      "file": "11-boss-chorus.mp4",
+      "poster": "11-boss-chorus.jpg",
+      "note": "NEXUS 弾幕の寄り",
+      "seconds": 8,
+      "camera": "punch",
+      "vertical": false
+    },
+    {
+      "id": "12-final",
+      "file": "12-final.mp4",
+      "poster": "12-final.jpg",
+      "note": "AION 最終ボス（シネマティック）",
+      "seconds": 10,
+      "camera": "letter",
+      "vertical": false
+    },
+    {
+      "id": "13-tank",
+      "file": "13-tank.mp4",
+      "poster": "13-tank.jpg",
+      "note": "装甲タンクの破壊（寄り）",
+      "seconds": 6,
+      "camera": "punch",
+      "vertical": false
+    },
+    {
+      "id": "14-cards",
+      "file": "14-cards.mp4",
+      "poster": "14-cards.jpg",
+      "note": "カード選択アップ（別アングル）",
+      "seconds": 7,
+      "camera": "full",
+      "vertical": false
+    }
+  ],
+  "commit": "2ffeaeca0f7f8581b26b089e7df15c5cdb438a29",
+  "pullRequest": 7
+}
