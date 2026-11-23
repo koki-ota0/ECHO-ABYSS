@@ -244,6 +244,8 @@ node scripts/demo/version.mjs --pr 8 \
 
 `version.mjs` が録画 → 720p 正規化 → コンタクトシート / リール生成 → `demos/index.json` 更新までを行います。あとは `demos/` と `index.json` をコミットするだけです。
 
+**撮影PRをマージしただけのときは何も撮りません。** `demos/` と `scripts/demo/` しか変わっていないマージは、ゲームの絵が前のバージョンと同じなので自動でスキップします（撮り直したいときは `--force`）。
+
 ```bash
 git add demos/index.json demos/2026-11-24-2ffeaec
 git commit -m "Capture demo footage for 2026-11-24-2ffeaec"
