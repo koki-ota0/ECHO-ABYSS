@@ -18,7 +18,14 @@ import { DEMOS_DIR, ROOT } from './lib.mjs';
 const argv = process.argv.slice(2);
 const option = (name, fallback) => {
   const index = argv.indexOf(`--${name}`);
-  return index >= 0 ? argv[index + 1] : fallback;
+  const value = index >= 0 ? argv[index + 1] : undefined;
+  // `--flag` with nothing after it (or followed by another flag) must not
+  // silently become a directory named "undefined" or overwrite a real tag.
+  if (index >= 0 && (value === undefined || value.startsWith('--'))) {
+    console.error(`--${name} needs a value.`);
+    process.exit(1);
+  }
+  return value ?? fallback;
 };
 
 function git(args) {
@@ -53,6 +60,15 @@ if (head !== target) {
 }
 
 const tag = option('tag') ?? `${git(['show', '-s', '--format=%cs', sha])}-${sha}`;
+const force = argv.includes('--force');
+
+for (const dir of [path.join(DEMOS_DIR, tag), path.join(DEMOS_DIR, `${git(['show', '-s', '--format=%cs', sha])}-${sha}`)]) {
+  if (!force && await fs.stat(dir).then(() => true, () => false)) {
+    console.error(`${path.relative(ROOT, dir)}/ already exists.`);
+    console.error('A version is captured once; pass --force to re-shoot it (the old files are replaced).');
+    process.exit(1);
+  }
+}
 
 console.log(`capturing ${tag}${pr ? ` (PR #${pr})` : ''} at ${resolution}`);
 execFileSync('node', ['scripts/demo/capture.mjs', '--version', tag, '--resolution', resolution], { cwd: ROOT, stdio: 'inherit' });
